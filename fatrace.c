@@ -42,6 +42,8 @@
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <ctype.h>
+#include <uchar.h>
+#include <locale.h>
 
 #define BUFSIZE 256*1024
 
@@ -67,6 +69,7 @@ static int option_user = 0;
 static pid_t ignored_pids[1024];
 static unsigned int ignored_pids_len = 0;
 static char* option_comm = NULL;
+static int option_json = 0;
 
 /* --time alarm sets this to 0 */
 static volatile int running = 1;
@@ -225,15 +228,73 @@ show_pid (pid_t pid)
     return true;
 }
 
+static bool
+is_valid_string(const char *str)
+{
+    mbstate_t st = {0};
+    char32_t    cp;
+    while (1) {
+        size_t n = mbrtoc32(&cp, str, MB_CUR_MAX, &st);
+        if (n == (size_t)-1 || n == (size_t)-2) /* illegal or incomplete */
+            return false;
+        if (n == 0) /* reached terminating NUL */
+            return true;
+        str += n; /* advance to next glyph */
+    }
+}
+
+static bool
+print_json_str (const char* key, const char* value) {
+    bool valid_value = is_valid_string(value);
+    if (valid_value) {
+        printf("\"%s\":\"", key);
+        for (int i = 0; value[i] != 0; i++) {
+            unsigned char c = value[i];
+            switch(c) {
+                case '"':  printf("\\\""); continue;
+                case '\\': printf("\\\\"); continue;
+                case '\b': printf("\\b"); continue;
+                case '\f': printf("\\f"); continue;
+                case '\n': printf("\\n"); continue;
+                case '\r': printf("\\r"); continue;
+                case '\t': printf("\\t"); continue;
+            }
+            if (c < 0x20 || c == 0x7e) {
+                printf("\\u%04x", c); continue;
+            }
+            putchar(c);
+        }
+        putchar('"');
+    } else {
+        printf("\"%s_raw\":[", key);
+        for (int i = 0; value[i] != 0; i++)
+            printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
+        putchar(']');
+    }
+    return !valid_value;
+}
+
 /**
  * print_event:
  *
  * Print data from fanotify_event_metadata struct to stdout.
  */
+#define MAX_PROBLEMS 1000 /* Keep MAX_PROBLEMS greater than or equal to the
+                             number of calls to add_problem, and make sure each
+                             call to add_problem() can be triggered no more than
+                             once. */
+#define add_problem(problem_str) \
+    do { \
+        problems[problem_idx++] = problem_str; \
+        if (problem_idx > MAX_PROBLEMS) \
+            errx (EXIT_FAILURE, "Too small problems array, please report a bug."); \
+    } while (0)
 static void
 print_event (const struct fanotify_event_metadata *data,
              const struct timeval *event_time)
 {
+    const char* problems[MAX_PROBLEMS];
+    int problem_idx = 0;
     int event_fd = data->fd;
     static char printbuf[100];
     static char procname[TASK_COMM_LEN];
@@ -262,25 +323,30 @@ print_event (const struct fanotify_event_metadata *data,
             got_procname = true;
         } else {
             debug ("failed to read /proc/%i/comm", data->pid);
+            add_problem("Failed to read /proc/PID/comm, cannot determine comm.");
         }
 
         close (procname_fd);
 
         /* get user and group */
         if (option_user) {
-            if (fstat (proc_fd, &proc_fd_stat) < 0)
+            if (fstat (proc_fd, &proc_fd_stat) < 0) {
                 debug ("failed to stat /proc/%i: %m", data->pid);
+                add_problem("Failed to stat /proc/PID, cannot determine uid or gid.");
+            }
         }
 
         close (proc_fd);
     } else {
         debug ("failed to open /proc/%i: %m", data->pid);
+        add_problem("Failed to open /proc/PID, cannot read any process metadata.");
     }
 
     /* /proc/pid/comm often goes away before processing the event; reuse previously cached value if pid still matches */
     if (!got_procname) {
         if (data->pid == procname_pid) {
             debug ("re-using cached procname value %s for pid %i", procname, procname_pid);
+            add_problem("However, cached comm is usable.");
         } else if (procname_pid >= 0) {
             debug ("invalidating previously cached procname %s for pid %i", procname, procname_pid);
             procname_pid = -1;
@@ -300,44 +366,83 @@ print_event (const struct fanotify_event_metadata *data,
         event_fd = get_fid_event_fd (data);
 #endif
 
+    bool got_path = false;
+    struct stat st = { .st_uid = -1 };
+    if (option_json && fstat (event_fd, &st) < 0)
+        add_problem("Failed to stat event, cannot determine device or inode.");
     if (event_fd >= 0) {
         /* try to figure out the path name */
         snprintf (printbuf, sizeof (printbuf), "/proc/self/fd/%i", event_fd);
         ssize_t len = readlink (printbuf, pathname, sizeof (pathname));
-        if (len < 0) {
+        if (len >= 0) {
+            pathname[len] = '\0';
+            got_path = true;
+        } else if (option_json) {
+          // no fallback, device/inode will always be printed
+        } else {
             /* fall back to the device/inode */
-            struct stat st;
-            if (fstat(event_fd, &st) < 0) {
+            if (fstat (event_fd, &st) < 0) {
                 warn ("stat");
                 pathname[0] = '\0';
+                add_problem("Failed to stat event, cannot determine device or inode.");
             } else {
                 snprintf (pathname, sizeof (pathname), "device %i:%i inode %ld\n", major (st.st_dev), minor (st.st_dev), st.st_ino);
             }
-        } else {
-            pathname[len] = '\0';
         }
 
         close (event_fd);
     } else {
         snprintf (pathname, sizeof (pathname), "(deleted)");
+        add_problem("Event deleted, cannot determine path.");
     }
 
     /* print event */
     if (option_timestamp == 1) {
         strftime (printbuf, sizeof (printbuf), "%H:%M:%S", localtime (&event_time->tv_sec));
-        printf ("%s.%06li ", printbuf, event_time->tv_usec);
+        printf (option_json ? "{\"timestamp\":\"%s.%06li\"" : "%s.%06li ", printbuf, event_time->tv_usec);
     } else if (option_timestamp == 2) {
-        printf ("%li.%06li ", event_time->tv_sec, event_time->tv_usec);
+        printf (option_json ? "{\"timestamp\":%li.%06li" : "%li.%06li ", event_time->tv_sec, event_time->tv_usec);
     }
 
     /* print user and group */
     if (option_user && proc_fd_stat.st_uid != (uid_t)-1)
-        snprintf(printbuf, sizeof printbuf, " [%u:%u]", proc_fd_stat.st_uid, proc_fd_stat.st_gid);
+        snprintf(printbuf, sizeof printbuf,
+                 option_json ? ",\"uid\":%u,\"gid\":%u" : " [%u:%u]",
+                 proc_fd_stat.st_uid, proc_fd_stat.st_gid);
     else
         printbuf[0] = '\0';
 
-    printf ("%s(%i)%s: %-3s %s\n", procname[0] == '\0' ? "unknown" : procname, data->pid, printbuf, mask2str (data->mask), pathname);
+    if (option_json) {
+        putchar(option_timestamp ? ',' : '{');
+        if (procname_pid >= 0) {
+            if (print_json_str("comm", procname)) {
+                add_problem("comm contains invalid UTF-8, comm_raw contains the bytes.");
+            }
+            putchar(',');
+        }
+        printf ("\"pid\":%i%s,\"types\":\"%s\"",
+                data->pid, printbuf, mask2str (data->mask));
+        if (st.st_uid != (uid_t)-1)
+            printf(",\"device\":[%i,%i],\"inode\":%ld"
+                   , major (st.st_dev), minor (st.st_dev), st.st_ino);
+        if (got_path) {
+            putchar(',');
+            if (print_json_str("path", pathname)) {
+                add_problem("path contains invalid UTF-8, path_raw contains the bytes.");
+            }
+        }
+        if (problem_idx) {
+          for (int i = 0; i < problem_idx; i++) {
+            printf("%s%s", i ? "\",\"" : ",\"problems\":[\"", problems[i]);
+          }
+          printf("\"]");
+        }
+        printf("}\n");
+    } else {
+        printf ("%s(%i)%s: %-3s %s\n", procname[0] == '\0' ? "unknown" : procname, data->pid, printbuf, mask2str (data->mask), pathname);
+    }
 }
+#undef add_problem
 
 static void
 do_mark (int fan_fd, const char *dir, bool fatal)
@@ -444,6 +549,7 @@ help (void)
 "  -p PID, --ignore-pid PID\tIgnore events for this process ID. Can be specified multiple times.\n"
 "  -f TYPES, --filter=TYPES\tShow only the given event types; choose from C, R, O, W, +, D, < or >, e. g. --filter=OC.\n"
 "  -C COMM, --command=COMM\tShow only events for this command.\n"
+"  -j, --json\t\t\tWrite events in JSONL format.\n"
 "  -h, --help\t\t\tShow help.");
 }
 
@@ -469,12 +575,13 @@ parse_args (int argc, char** argv)
         {"ignore-pid",    required_argument, 0, 'p'},
         {"filter",        required_argument, 0, 'f'},
         {"command",       required_argument, 0, 'C'},
+        {"json",          no_argument,       0, 'j'},
         {"help",          no_argument,       0, 'h'},
         {0,               0,                 0,  0 }
     };
 
     while (1) {
-        c = getopt_long (argc, argv, "C:co:s:tup:f:h", long_options, NULL);
+        c = getopt_long (argc, argv, "C:co:s:tup:f:jh", long_options, NULL);
 
         if (c == -1)
             break;
@@ -561,6 +668,10 @@ parse_args (int argc, char** argv)
                     errx (EXIT_FAILURE, "Error: --timestamp option can be given at most two times");
                 break;
 
+            case 'j':
+                option_json = 1;
+                break;
+
             case 'h':
                 help ();
                 exit (EXIT_SUCCESS);
@@ -598,6 +709,14 @@ main (int argc, char** argv)
     struct fanotify_event_metadata *data;
     struct sigaction sa;
     struct timeval event_time;
+
+    /* use a UTF-8 locale if possible so is_valid_string works as expected */
+    locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", NULL);
+    if (!utf8) utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
+    if (utf8)
+        uselocale(utf8);
+    else
+        warnx ("Could not switch to a UTF-8 locale");
 
     /* always ignore events from ourselves (writing log file) */
     ignored_pids[ignored_pids_len++] = getpid ();

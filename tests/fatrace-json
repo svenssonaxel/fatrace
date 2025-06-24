@@ -1,0 +1,58 @@
+#!/bin/sh
+set -euC
+
+mkdir -m 777 tmp
+trap "rm -rf tmp" EXIT INT QUIT PIPE
+
+LOG="$AUTOPKGTEST_TMP/fatrace.log"
+echo "starting fatrace..."
+fatrace --current-mount --user -s 2 -o $LOG --json &
+sleep 1
+
+# path
+touch "tmp/1-good-$(printf '\303\205').tmp"
+
+# path_raw and problems
+touch "tmp/2-bad-$(printf '\340\203\205').tmp"
+
+# uid and gid
+runuser -u nobody touch "tmp/3-good.tmp"
+
+# pid
+bash -c 'echo $$ > '"tmp/4-pid"'; sleep .1;'
+
+# device and inode
+touch "tmp/5-good.tmp"
+
+echo "waiting for fatrace..."
+wait
+
+echo "checking log..."
+check_log() {
+    if ! jq < $LOG >/dev/null; then
+        echo "Illegal JSON" >&2
+    fi
+    if jq < $LOG -e "select($1)" >/dev/null; then
+        : # OK
+    else
+        echo "jq $1 exited with code $?" >&2
+        exit 1
+    fi
+}
+
+tmp="$(realpath tmp)"
+
+# path
+check_log '.comm=="touch" and .path=="'"$tmp/1-good-Å.tmp"'" and (.|has("path_raw")|not)'
+
+# path_raw and problems
+check_log '.comm=="touch" and .path_raw[-14:]==[47, 50, 45, 98, 97, 100, 45, 224, 131, 133, 46, 116, 109, 112] and (.|has("path")|not) and .problems==["path contains invalid UTF-8, path_raw contains the bytes."]'
+
+# uid and gid
+check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobody)"' and .path=="'"$tmp/3-good.tmp"'"'
+
+# pid
+check_log '.comm=="bash" and .pid=='"$(cat "$tmp/4-pid")"' and .path=="'"$tmp/4-pid"'"'
+
+# device and inode
+check_log '.comm=="touch" and .path=="'"$tmp/5-good.tmp"'" and .device==['"$(stat -c %Hd,%Ld "$tmp/5-good.tmp")"'] and .inode=='"$(stat -c %i "$tmp/5-good.tmp")"
