@@ -43,6 +43,7 @@
 #include <sys/types.h>
 #include <ctype.h>
 #include <ftw.h>
+#include <sys/mman.h>
 
 #define BUFSIZE 256*1024
 
@@ -58,6 +59,11 @@
 #define debug(...) {}
 #endif
 
+struct ignored_pids_t {
+    pid_t pids[1024];
+    unsigned int len;
+};
+
 /* command line options */
 static char* option_output = NULL;
 static long option_filter_mask = 0xffffffff;
@@ -65,8 +71,7 @@ static long option_timeout = -1;
 static int option_current_mount = 0;
 static int option_timestamp = 0;
 static int option_user = 0;
-static pid_t ignored_pids[1024];
-static unsigned int ignored_pids_len = 0;
+struct ignored_pids_t* ignored_pids;
 static char* option_comm = NULL;
 static int option_json = 0;
 static int option_inclusive = 0;
@@ -76,6 +81,7 @@ static const char *option_dirs[1024];
 static int option_dir_lens[1024];
 static int dir_watch_mode = 0;
 static unsigned int option_dirs_len = 0;
+static int option_policy = 0;
 
 /* --time alarm sets this to 0 */
 static volatile int running = 1;
@@ -193,13 +199,13 @@ mask2str (uint64_t mask)
     static char buffer[10];
     int offset = 0;
 
-    if (mask & FAN_ACCESS)
+    if (mask & (FAN_ACCESS | FAN_ACCESS_PERM))
         buffer[offset++] = 'R';
-    if (mask & FAN_CLOSE_WRITE || mask & FAN_CLOSE_NOWRITE)
+    if (mask & (FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE))
         buffer[offset++] = 'C';
-    if (mask & FAN_MODIFY || mask & FAN_CLOSE_WRITE)
+    if (mask & (FAN_MODIFY | FAN_CLOSE_WRITE))
         buffer[offset++] = 'W';
-    if (mask & FAN_OPEN)
+    if (mask & (FAN_OPEN | FAN_OPEN_PERM))
         buffer[offset++] = 'O';
 #ifdef FAN_REPORT_FID
     if (mask & FAN_CREATE)
@@ -227,8 +233,8 @@ static bool
 show_pid (pid_t pid)
 {
     unsigned int i;
-    for (i = 0; i < ignored_pids_len; ++i)
-        if (pid == ignored_pids[i])
+    for (i = 0; i < ignored_pids->len; ++i)
+        if (pid == ignored_pids->pids[i])
             return false;
 
     return true;
@@ -648,7 +654,11 @@ static void
 do_mark (int fan_fd, const char *dir, bool fatal)
 {
     int res;
-    uint64_t mask = FAN_ACCESS | FAN_MODIFY | FAN_OPEN | FAN_CLOSE | FAN_ONDIR | FAN_EVENT_ON_CHILD;
+    uint64_t mask =
+        (option_policy ? FAN_ACCESS_PERM : FAN_ACCESS) |
+        FAN_MODIFY |
+        (option_policy ? FAN_OPEN_PERM : FAN_OPEN) |
+        FAN_CLOSE | FAN_ONDIR | FAN_EVENT_ON_CHILD;
 
 #ifdef FAN_REPORT_FID
     if (fid_mode)
@@ -736,6 +746,9 @@ setup_fanotify (int fan_fd)
         } else {
             warnx ("Directories are too many to watch separately. Watching all"
                    " files instead.");
+            if (option_policy)
+                warnx ("--policy can slightly increase the latency for some file"
+                       " system operations even outside of watched directories.");
         }
     }
 
@@ -805,6 +818,7 @@ help (void)
 "  -a, --ancestors\t\tInclude information about parent processes.\n"
 "  -e, --exe\t\t\tAdd executable path to events.\n"
 "  -d, --dir\t\t\tShow only events on files under this directory. Can be specified multiple times.\n"
+"  -P, --policy\t\t\tPolicy mode. Block userspace application until we read metadata successfully.\n"
 "  -h, --help\t\t\tShow help.");
 }
 
@@ -835,12 +849,13 @@ parse_args (int argc, char** argv)
         {"ancestors",     no_argument,       0, 'a'},
         {"exe",           no_argument,       0, 'e'},
         {"dir",           no_argument,       0, 'd'},
+        {"policy",        no_argument,       0, 'P'},
         {"help",          no_argument,       0, 'h'},
         {0,               0,                 0,  0 }
     };
 
     while (1) {
-        c = getopt_long (argc, argv, "C:co:s:tup:f:jiaed:h", long_options, NULL);
+        c = getopt_long (argc, argv, "C:co:s:tup:f:jiaed:Ph", long_options, NULL);
 
         if (c == -1)
             break;
@@ -917,9 +932,11 @@ parse_args (int argc, char** argv)
                 pid = strtol (optarg, &endptr, 10);
                 if (*endptr != '\0' || pid <= 0)
                     errx (EXIT_FAILURE, "Error: Invalid PID");
-                if (ignored_pids_len
-                    < (sizeof (ignored_pids) / sizeof (ignored_pids[0])))
-                    ignored_pids[ignored_pids_len++] = pid;
+                if ((ignored_pids->len + 1) /* We need to reserve 1 PID for the
+                                               child process when option_policy is
+                                               given. */
+                    < (sizeof (ignored_pids->pids) / sizeof (ignored_pids->pids[0])))
+                    ignored_pids->pids[ignored_pids->len++] = pid;
                 else
                     errx (EXIT_FAILURE, "Error: Too many ignored PIDs");
                 break;
@@ -984,6 +1001,10 @@ parse_args (int argc, char** argv)
                     errx (EXIT_FAILURE, "Error: Too many dirs");
                 break;
 
+            case 'P':
+                option_policy = 1;
+                break;
+
             case 'h':
                 help ();
                 exit (EXIT_SUCCESS);
@@ -1025,13 +1046,24 @@ main (int argc, char** argv)
     struct sigaction sa;
     struct timeval event_time;
 
+    ignored_pids = 0;
+    size_t ignored_pids_map_len = ((sizeof(struct ignored_pids_t) + 4095) & ~4095);
+    ignored_pids = mmap(NULL, ignored_pids_map_len,
+                        PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_ANONYMOUS,
+                        -1, 0);
+    if (ignored_pids == MAP_FAILED) {
+        perror ("mmap");
+        exit (EXIT_FAILURE);
+    }
+    ignored_pids->len = 0;
     /* always ignore events from ourselves (writing log file) */
-    ignored_pids[ignored_pids_len++] = getpid ();
+    ignored_pids->pids[ignored_pids->len++] = getpid ();
 
     parse_args (argc, argv);
 
 #ifdef FAN_REPORT_FID
-    fan_fd = fanotify_init (FAN_CLASS_NOTIF | FAN_REPORT_FID, O_LARGEFILE);
+    fan_fd = fanotify_init ((option_policy ? FAN_CLASS_PRE_CONTENT : FAN_CLASS_NOTIF) | FAN_REPORT_FID, O_LARGEFILE);
     if (fan_fd >= 0)
         fid_mode = 1;
 
@@ -1039,7 +1071,7 @@ main (int argc, char** argv)
         debug ("FAN_REPORT_FID not available");
 #endif
     if (fan_fd < 0)
-        fan_fd = fanotify_init (0, O_LARGEFILE);
+        fan_fd = fanotify_init (option_policy ? FAN_CLASS_PRE_CONTENT : 0, O_LARGEFILE);
 
     if (fan_fd < 0) {
         int e = errno;
@@ -1048,8 +1080,6 @@ main (int argc, char** argv)
             fputs ("You need to run this program as root.\n", stderr);
         exit (EXIT_FAILURE);
     }
-
-    setup_fanotify (fan_fd);
 
     /* allocate memory for fanotify */
     buffer = NULL;
@@ -1092,6 +1122,26 @@ main (int argc, char** argv)
         memset (&event_time, 0, sizeof (struct timeval));
     }
 
+    if (option_policy) {
+        /* setup_fanotify() will cause notifications that we need to respond to,
+           so we need concurrency. */
+        int setup_child = fork();
+        if (setup_child == 0) {
+            setup_fanotify (fan_fd);
+            /* Give the parent time to process all events generated by child, then
+               remove the child PID from ignore list. */
+            sleep(10);
+            ignored_pids->len--;
+            _exit(0);
+        }
+        else if (setup_child < 0) {
+            perror ("fork");
+            exit (EXIT_FAILURE);
+        }
+        ignored_pids->pids[ignored_pids->len++] = setup_child;
+    } else
+        setup_fanotify (fan_fd);
+
     /* read all events in a loop */
     while (running) {
         res = read (fan_fd, buffer, BUFSIZE);
@@ -1116,9 +1166,22 @@ main (int argc, char** argv)
             if (data->vers != FANOTIFY_METADATA_VERSION)
                 errx (EXIT_FAILURE, "Mismatch of fanotify metadata version");
             print_event (data, &event_time);
+            if (option_policy &&
+                (data->mask & (FAN_OPEN_PERM | FAN_ACCESS_PERM))) {
+                struct fanotify_response r = {
+                    .fd       = data->fd,
+                    .response = FAN_ALLOW
+                };
+                ssize_t wr = write(fan_fd, &r, sizeof r);
+                if (wr != sizeof r) {
+                    perror("fanotify response write");
+                    exit (EXIT_FAILURE);
+                }
+            }
             data = FAN_EVENT_NEXT (data, res);
         }
     }
+    munmap(ignored_pids, ignored_pids_map_len);
 
     return 0;
 }
