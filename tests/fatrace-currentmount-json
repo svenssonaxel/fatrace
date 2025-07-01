@@ -47,7 +47,7 @@ check_log() {
 }
 
 # accessing the NEWS file
-check_log '(.types|test("^RC?O?")) and .path=="'"$(pwd)/NEWS"'"'
+check_log '(.types|test("^RC?O?$")) and .path=="'"$(pwd)/NEWS"'"'
 # file creation
 TEST_FILE=$(realpath "$TEST_FILE")
 check_log '.comm=="touch" and (.types|test("^C?W?O$")) and .path=="'"$TEST_FILE"'"'
