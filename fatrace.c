@@ -255,7 +255,8 @@ print_json_str (const char* key, const char* value) {
             (c                    & 0xfe) != 0xc0 &&
             (str[i+1] & 0xc0) == 0x80)
         {
-            printf("\\u%04x", (c & 0x1f) << 6 | (str[i+1] & 0x3f));
+            putchar(c);
+            putchar(str[i+1]);
             i+=2; continue;
         }
         // 3-char: 1110xxxx 10xxxxxx 10xxxxxx
@@ -267,10 +268,9 @@ print_json_str (const char* key, const char* value) {
             ((c & 0x0f) | (str[i+1] & 0x20)) != 0x2d &&
             (str[i+2] & 0xc0) == 0x80)
         {
-            printf("\\u%04x",
-                   (c & 0x0f) << 12 |
-                   (str[i+1] & 0x3f) << 6 |
-                   (str[i+2] & 0x3f));
+            putchar(c);
+            putchar(str[i+1]);
+            putchar(str[i+2]);
             i+=3; continue;
         }
         // 4-char: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
@@ -283,16 +283,14 @@ print_json_str (const char* key, const char* value) {
             (str[i+2] & 0xc0) == 0x80 &&
             (str[i+3] & 0xc0) == 0x80)
         {
-            int cp = ((c & 0x07) << 18 |
-                      (str[i+1] & 0x3f) << 12 |
-                      (str[i+2] & 0x3f) << 6 |
-                      (str[i+3] & 0x3f));
-            int hsp = ((cp - 0x10000) >> 10)    | 0xd800;
-            int lsp = ((cp - 0x10000) & 0x3f) | 0xdc00;
-            printf("\\u%04x\\u%04x", hsp, lsp);
+            putchar(c);
+            putchar(str[i+1]);
+            putchar(str[i+2]);
+            putchar(str[i+3]);
             i+=4; continue;
         }
-        printf("\\ufffd");
+        // Print a UTF-8 encoded U+fffd Replacement character
+        putchar(0xef); putchar(0xbf); putchar(0xbd);
         decode_problem = true;
         i++; continue;
     }
