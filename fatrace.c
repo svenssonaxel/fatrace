@@ -229,7 +229,7 @@ show_pid (pid_t pid)
 }
 
 static bool
-is_valid_utf8(const char *str)
+is_valid_string(const char *str)
 {
     mbstate_t st = {0};
     char32_t    cp;
@@ -245,8 +245,8 @@ is_valid_utf8(const char *str)
 
 static bool
 print_json_str (const char* key, const char* value) {
-    bool is_utf8 = is_valid_utf8(value);
-    if (is_utf8) {
+    bool valid_value = is_valid_string(value);
+    if (valid_value) {
         printf("\"%s\":\"", key);
         for (int i = 0; value[i] != 0; i++) {
             unsigned char c = value[i];
@@ -268,10 +268,10 @@ print_json_str (const char* key, const char* value) {
     } else {
         printf("\"%s_raw\":[", key);
         for (int i = 0; value[i] != 0; i++)
-          printf(i ? ",%d" : "%d", (unsigned int)(value[i]));
+            printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
         putchar(']');
     }
-    return !is_utf8;
+    return !valid_value;
 }
 
 /**
@@ -710,7 +710,7 @@ main (int argc, char** argv)
     struct sigaction sa;
     struct timeval event_time;
 
-    /* use a UTF-8 locale if possible so is_valid_utf8 works as expected */
+    /* use a UTF-8 locale if possible so is_valid_string works as expected */
     locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", NULL);
     if (!utf8) utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
     if (utf8)
