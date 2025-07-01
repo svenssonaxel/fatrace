@@ -42,6 +42,8 @@
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <ctype.h>
+#include <uchar.h>
+#include <locale.h>
 
 #define BUFSIZE 256*1024
 
@@ -227,81 +229,48 @@ show_pid (pid_t pid)
 }
 
 static bool
-print_json_str (const char* key, const char* value) {
-    const unsigned char* str = (unsigned char*)value;
-    printf("\"%s\":\"", key);
-    bool decode_problem = false;
-    for (int i = 0; str[i] != 0; ) {
-        unsigned char c = str[i];
-        // 1-char: 0xxxxxxx
-        switch(c) {
-            case '"':  printf("\\\""); i++; continue;
-            case '\\': printf("\\\\"); i++; continue;
-            case '\b': printf("\\b"); i++; continue;
-            case '\f': printf("\\f"); i++; continue;
-            case '\n': printf("\\n"); i++; continue;
-            case '\r': printf("\\r"); i++; continue;
-            case '\t': printf("\\t"); i++; continue;
-        }
-        if (0x20 <= c && c <= 0x7e) {
-            putchar(c); i++; continue;
-        }
-        if ((c & 0x80) == 0) {
-            printf("\\u%04x", c); i++; continue;
-        }
-        // 2-char: 110xxxxx 10xxxxxx
-        // but not 1100000x 10xxxxxx (overlong)
-        if ((c                    & 0xe0) == 0xc0 &&
-            (c                    & 0xfe) != 0xc0 &&
-            (str[i+1] & 0xc0) == 0x80)
-        {
-            putchar(c);
-            putchar(str[i+1]);
-            i+=2; continue;
-        }
-        // 3-char: 1110xxxx 10xxxxxx 10xxxxxx
-        // but not 11100000 100xxxxx 10xxxxxx (overlong)
-        // neither 11101101 101xxxxx 10xxxxxx (reserved for surrogate pairs)
-        if ((c                    & 0xf0) == 0xe0 &&
-            (str[i+1] & 0xc0) == 0x80 &&
-            ((c & 0x0f) | (str[i+1] & 0x20)) != 0x00 &&
-            ((c & 0x0f) | (str[i+1] & 0x20)) != 0x2d &&
-            (str[i+2] & 0xc0) == 0x80)
-        {
-            putchar(c);
-            putchar(str[i+1]);
-            putchar(str[i+2]);
-            i+=3; continue;
-        }
-        // 4-char: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-        // but not 11110000 1000xxxx 10xxxxxx 10xxxxxx (overlong)
-        // neither 11110PPP 10PPxxxx 10xxxxxx 10xxxxxx, PPPPP>0x10 (too big)
-        if ((c                    & 0xf8) == 0xf0 &&
-            (str[i+1] & 0xc0) == 0x80 &&
-            ((c & 0x07) | (str[i+1] & 0x30)) != 0 &&
-            (((c & 0x07) << 2) | ((str[i+1] & 0x30) >> 4)) <= 0x10 &&
-            (str[i+2] & 0xc0) == 0x80 &&
-            (str[i+3] & 0xc0) == 0x80)
-        {
-            putchar(c);
-            putchar(str[i+1]);
-            putchar(str[i+2]);
-            putchar(str[i+3]);
-            i+=4; continue;
-        }
-        // Print a UTF-8 encoded U+fffd Replacement character
-        putchar(0xef); putchar(0xbf); putchar(0xbd);
-        decode_problem = true;
-        i++; continue;
+is_valid_utf8(const char *str)
+{
+    mbstate_t st = {0};
+    char32_t    cp;
+    while (1) {
+        size_t n = mbrtoc32(&cp, str, MB_CUR_MAX, &st);
+        if (n == (size_t)-1 || n == (size_t)-2) /* illegal or incomplete */
+            return false;
+        if (n == 0) /* reached terminating NUL */
+            return true;
+        str += n; /* advance to next glyph */
     }
-    putchar('"');
-    if (decode_problem) {
+}
+
+static bool
+print_json_str (const char* key, const char* value) {
+    bool is_utf8 = is_valid_utf8(value);
+    if (is_utf8) {
+        printf("\"%s\":\"", key);
+        for (int i = 0; value[i] != 0; i++) {
+            unsigned char c = value[i];
+            switch(c) {
+                case '"':  printf("\\\""); continue;
+                case '\\': printf("\\\\"); continue;
+                case '\b': printf("\\b"); continue;
+                case '\f': printf("\\f"); continue;
+                case '\n': printf("\\n"); continue;
+                case '\r': printf("\\r"); continue;
+                case '\t': printf("\\t"); continue;
+            }
+            if (c < 0x20 || c == 0x7e) {
+                printf("\\u%04x", c); continue;
+            }
+            putchar(c);
+        }
+    } else {
         printf(",\"%s_raw\":[", key);
-        for (int i = 0; str[i] != 0; i++)
-          printf(i ? ",%d" : "%d", (unsigned int)(str[i]));
+        for (int i = 0; value[i] != 0; i++)
+          printf(i ? ",%d" : "%d", (unsigned int)(value[i]));
         putchar(']');
     }
-    return decode_problem;
+    return !is_utf8;
 }
 
 /**
@@ -739,6 +708,14 @@ main (int argc, char** argv)
     struct fanotify_event_metadata *data;
     struct sigaction sa;
     struct timeval event_time;
+
+    /* use a UTF-8 locale if possible so is_valid_utf8 works as expected */
+    locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", NULL);
+    if (!utf8) utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
+    if (utf8)
+        uselocale(utf8);
+    else
+        warnx ("Could not switch to a UTF-8 locale");
 
     /* always ignore events from ourselves (writing log file) */
     ignored_pids[ignored_pids_len++] = getpid ();
