@@ -264,8 +264,9 @@ print_json_str (const char* key, const char* value) {
             }
             putchar(c);
         }
+        putchar('"');
     } else {
-        printf(",\"%s_raw\":[", key);
+        printf("\"%s_raw\":[", key);
         for (int i = 0; value[i] != 0; i++)
           printf(i ? ",%d" : "%d", (unsigned int)(value[i]));
         putchar(']');
