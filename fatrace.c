@@ -235,7 +235,7 @@ print_json_str (const char* key, const char* value) {
         char c = str[i];
         // 1-char: 0xxxxxxx
         switch(c) {
-            case '"':    printf("\\\""); i++; continue;
+            case '"':  printf("\\\""); i++; continue;
             case '\\': printf("\\\\"); i++; continue;
             case '\b': printf("\\b"); i++; continue;
             case '\f': printf("\\f"); i++; continue;
