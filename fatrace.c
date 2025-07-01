@@ -311,11 +311,18 @@ print_json_str (const char* key, const char* value) {
  *
  * Print data from fanotify_event_metadata struct to stdout.
  */
+#define MAX_PROBLEMS 7
+#define add_problem(problem_str) \
+    do { \
+        problems[problem_idx++] = problem_str; \
+        if (problem_idx > MAX_PROBLEMS) \
+            errx (EXIT_FAILURE, "Too small problems array, please report a bug."); \
+    } while (0)
 static void
 print_event (const struct fanotify_event_metadata *data,
              const struct timeval *event_time)
 {
-    const char* problems[7];
+    const char* problems[MAX_PROBLEMS];
     int problem_idx = 0;
     int event_fd = data->fd;
     static char printbuf[100];
@@ -345,7 +352,7 @@ print_event (const struct fanotify_event_metadata *data,
             got_procname = true;
         } else {
             debug ("failed to read /proc/%i/comm", data->pid);
-            problems[problem_idx++] = "Failed to read /proc/PID/comm, cannot determine comm.";
+            add_problem("Failed to read /proc/PID/comm, cannot determine comm.");
         }
 
         close (procname_fd);
@@ -354,7 +361,7 @@ print_event (const struct fanotify_event_metadata *data,
         if (option_user) {
             if (fstat (proc_fd, &proc_fd_stat) < 0) {
                 debug ("failed to stat /proc/%i: %m", data->pid);
-                problems[problem_idx++] = "Failed to stat /proc/PID, cannot determine uid or gid.";
+                add_problem("Failed to stat /proc/PID, cannot determine uid or gid.");
             }
         }
 
@@ -362,14 +369,14 @@ print_event (const struct fanotify_event_metadata *data,
     } else {
         debug ("failed to open /proc/%i: %m", data->pid);
         procname[0] = '\0';
-        problems[problem_idx++] = "Failed to open /proc/PID, cannot read any process metadata.";
+        add_problem("Failed to open /proc/PID, cannot read any process metadata.");
     }
 
     /* /proc/pid/comm often goes away before processing the event; reuse previously cached value if pid still matches */
     if (!got_procname) {
         if (data->pid == procname_pid) {
             debug ("re-using cached procname value %s for pid %i", procname, procname_pid);
-            problems[problem_idx++] = "However, cached comm is usable.";
+            add_problem("However, cached comm is usable.");
         } else if (procname_pid >= 0) {
             debug ("invalidating previously cached procname %s for pid %i", procname, procname_pid);
             procname_pid = -1;
@@ -391,7 +398,7 @@ print_event (const struct fanotify_event_metadata *data,
     bool got_path = false;
     struct stat st = { .st_uid = -1 };
     if (option_json && fstat (event_fd, &st) < 0)
-        problems[problem_idx++] = "Failed to stat event, cannot determine device or inode.";
+        add_problem("Failed to stat event, cannot determine device or inode.");
     if (event_fd >= 0) {
         /* try to figure out the path name */
         snprintf (printbuf, sizeof (printbuf), "/proc/self/fd/%i", event_fd);
@@ -405,7 +412,7 @@ print_event (const struct fanotify_event_metadata *data,
             /* fall back to the device/inode */
             if (fstat (event_fd, &st) < 0) {
                 pathname[0] = '\0';
-                problems[problem_idx++] = "Failed to stat event, cannot determine device or inode.";
+                add_problem("Failed to stat event, cannot determine device or inode.");
             } else {
                 snprintf (pathname, sizeof (pathname), "device %i:%i inode %ld\n", major (st.st_dev), minor (st.st_dev), st.st_ino);
             }
@@ -414,7 +421,7 @@ print_event (const struct fanotify_event_metadata *data,
         close (event_fd);
     } else {
         snprintf (pathname, sizeof (pathname), "(deleted)");
-        problems[problem_idx++] = "Event deleted, cannot determine path.";
+        add_problem("Event deleted, cannot determine path.");
     }
 
     /* print event */
@@ -437,7 +444,7 @@ print_event (const struct fanotify_event_metadata *data,
         putchar(option_timestamp ? ',' : '{');
         if (procname_pid >= 0) {
             if (print_json_str("comm", procname)) {
-                problems[problem_idx++] = "comm contains invalid UTF-8, comm_raw contains the bytes.";
+                add_problem("comm contains invalid UTF-8, comm_raw contains the bytes.");
             }
             putchar(',');
         }
@@ -449,7 +456,7 @@ print_event (const struct fanotify_event_metadata *data,
         if (got_path) {
             putchar(',');
             if (print_json_str("path", pathname)) {
-                problems[problem_idx++] = "path contains invalid UTF-8, path_raw contains the bytes.";
+                add_problem("path contains invalid UTF-8, path_raw contains the bytes.");
             }
         }
         if (problem_idx) {
