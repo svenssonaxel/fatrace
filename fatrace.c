@@ -471,6 +471,7 @@ print_event (const struct fanotify_event_metadata *data,
         printf ("%s(%i)%s: %-3s %s\n", procname[0] == '\0' ? "unknown" : procname, data->pid, printbuf, mask2str (data->mask), pathname);
     }
 }
+#undef add_problem
 
 static void
 do_mark (int fan_fd, const char *dir, bool fatal)
