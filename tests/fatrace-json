@@ -42,6 +42,10 @@ check_log() {
 
 tmp="$(realpath tmp)"
 
+echo 1-good in log:
+grep -F 1-good $LOG
+echo =====
+
 # path
 check_log '.comm=="touch" and .path=="'"$tmp/1-good-Å.tmp"'" and (.|has("path_raw")|not)'
 
