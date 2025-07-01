@@ -309,7 +309,7 @@ print_json_str (const char* key, const char* value) {
  *
  * Print data from fanotify_event_metadata struct to stdout.
  */
-#define MAX_PROBLEMS 7
+#define MAX_PROBLEMS 9
 #define add_problem(problem_str) \
     do { \
         problems[problem_idx++] = problem_str; \
