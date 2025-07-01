@@ -232,7 +232,7 @@ print_json_str (const char* key, const char* value) {
     printf("\"%s\":\"", key);
     bool decode_problem = false;
     for (int i = 0; str[i] != 0; ) {
-        char c = str[i];
+        unsigned char c = str[i];
         // 1-char: 0xxxxxxx
         switch(c) {
             case '"':  printf("\\\""); i++; continue;
