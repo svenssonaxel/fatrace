@@ -309,9 +309,10 @@ print_json_str (const char* key, const char* value) {
  *
  * Print data from fanotify_event_metadata struct to stdout.
  */
-#define MAX_PROBLEMS 9 /* Keep this equal to the number of calls to add_problem,
-                          and make sure each call to add_problem() can be
-                          triggered no more than once. */
+#define MAX_PROBLEMS 1000 /* Keep MAX_PROBLEMS greater than or equal to the
+                             number of calls to add_problem, and make sure each
+                             call to add_problem() can be triggered no more than
+                             once. */
 #define add_problem(problem_str) \
     do { \
         problems[problem_idx++] = problem_str; \
