@@ -251,7 +251,7 @@ is_valid_utf8(const char *str)
     }
 }
 
-static bool
+static void
 print_json_str (const char* key, const char* value) {
     bool valid_utf8 = is_valid_utf8(value);
     if (valid_utf8) {
@@ -279,7 +279,6 @@ print_json_str (const char* key, const char* value) {
             printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
         putchar(']');
     }
-    return valid_utf8;
 }
 
 /**
