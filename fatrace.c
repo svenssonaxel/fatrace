@@ -235,7 +235,8 @@ is_valid_mb_string(const char *str)
 {
     mbstate_t st = {0};
     char32_t cp;
-    const char *end = str + strlen(str);
+    /* point beyond terminating null since mbrtoc32 needs to read it. */
+    const char *end = str + strlen(str) + 1;
     while (1) {
         size_t n = mbrtoc32(&cp, str, end - str, &st);
         if (n == (size_t)-1 || n == (size_t)-2 || n == (size_t)-3)
@@ -425,7 +426,7 @@ print_event (const struct fanotify_event_metadata *data,
             }
             putchar(',');
         }
-        printf ("\"pid\":%i%s,\"types\":\"%s\"",
+        printf ("\"pid\":%i,%s\"types\":\"%s\"",
                 data->pid, printbuf, mask2str (data->mask));
         if (st.st_uid != (uid_t)-1)
             printf(",\"device\":[%i,%i],\"inode\":%ld"
