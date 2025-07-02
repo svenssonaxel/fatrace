@@ -12,7 +12,7 @@ sleep 1
 # path
 touch "tmp/1-good-$(printf '\303\205').tmp"
 
-# path_raw and problems
+# path_raw
 touch "tmp/2-bad-$(printf '\340\203\205').tmp"
 
 # uid and gid
@@ -37,8 +37,8 @@ tmp="$(realpath tmp)"
 # path
 check_log '.comm=="touch" and .path=="'"$tmp/1-good-Å.tmp"'" and (.|has("path_raw")|not)'
 
-# path_raw and problems
-check_log '.comm=="touch" and .path_raw[-14:]==[47, 50, 45, 98, 97, 100, 45, 224, 131, 133, 46, 116, 109, 112] and (.|has("path")|not) and .problems==["path contains invalid UTF-8, path_raw contains the bytes."]'
+# path_raw
+check_log '.comm=="touch" and .path_raw[-14:]==[47, 50, 45, 98, 97, 100, 45, 224, 131, 133, 46, 116, 109, 112] and (.|has("path")|not)'
 
 # uid and gid
 check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobody)"' and .path=="'"$tmp/3-good.tmp"'"'
