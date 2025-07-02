@@ -228,10 +228,13 @@ show_pid (pid_t pid)
     return true;
 }
 
-/* this checks whether the string is valid UTF-8, assuming main() successfully
-   switched to a UTF-8 locale.  */
+/* This checks whether the string is valid UTF-8. If main() successfully
+   switched to a UTF-8 locale we'll be able to detect all valid UTF-8 strings.
+   Otherwise, we are on locale C and we can only validate ASCII, which is a
+   subset of UTF-8. Therefore, in all cases, a true return value means valid
+   UTF-8. */
 static bool
-is_valid_mb_string(const char *str)
+is_valid_utf8(const char *str)
 {
     mbstate_t st = {0};
     char32_t cp;
@@ -250,8 +253,8 @@ is_valid_mb_string(const char *str)
 
 static bool
 print_json_str (const char* key, const char* value) {
-    bool valid_mb_value = is_valid_mb_string(value);
-    if (valid_mb_value) {
+    bool valid_utf8 = is_valid_utf8(value);
+    if (valid_utf8) {
         printf("\"%s\":\"", key);
         for (int i = 0; value[i] != 0; i++) {
             unsigned char c = value[i];
@@ -276,7 +279,7 @@ print_json_str (const char* key, const char* value) {
             printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
         putchar(']');
     }
-    return valid_mb_value;
+    return valid_utf8;
 }
 
 /**
@@ -706,6 +709,30 @@ signal_handler (int signal)
         _exit (EXIT_FAILURE);
 }
 
+static locale_t locale = (locale_t)0;
+static void set_utf8_locale() {
+    /* set system locale */
+    const char *current_character_set = setlocale(LC_CTYPE, NULL);
+    /* if we already have a UTF-8 locale, do nothing */
+    if (current_character_set &&
+        (strcasestr(current_character_set, "UTF-8") ||
+         strcasestr(current_character_set, "UTF8")))
+        return;
+    /* try to switch to a UTF-8 locale if possible */
+    const char *cand[] = { "C.UTF-8", "en_US.UTF-8", "POSIX.UTF-8", NULL };
+    for (int i = 0; cand[i]; i++) {
+        locale = newlocale(LC_CTYPE_MASK, cand[i], NULL);
+        if (locale)
+            break;
+    }
+    if (!locale)
+        /* fallback to C locale, since ASCII is a subset of UTF-8 */
+        locale = newlocale(LC_CTYPE_MASK, "C", NULL);
+    if (!locale)
+        err (EXIT_FAILURE, "Failed to set locale");
+    uselocale(locale);
+}
+
 int
 main (int argc, char** argv)
 {
@@ -716,14 +743,9 @@ main (int argc, char** argv)
     struct sigaction sa;
     struct timeval event_time;
 
-    /* use a UTF-8 locale if possible so is_valid_mb_string works as expected */
-    locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", NULL);
-    if (!utf8)
-        utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
-    if (utf8)
-        uselocale(utf8);
-    else
-        warnx ("Could not switch to a UTF-8 locale");
+    /* In order for is_valid_utf8 to work as expected, switch to a UTF-8 locale
+       if possible, with ASCII as fallback. */
+    set_utf8_locale();
 
     /* always ignore events from ourselves (writing log file) */
     ignored_pids[ignored_pids_len++] = getpid ();
