@@ -32,15 +32,7 @@ wait
 
 echo "checking log..."
 check_log() {
-    if ! jq < $LOG >/dev/null; then
-        echo "Illegal JSON" >&2
-    fi
-    if jq < $LOG -e "select($1)" >/dev/null; then
-        : # OK
-    else
-        echo "jq $1 exited with code $?" >&2
-        exit 1
-    fi
+    jq -e "select($1)" < $LOG > /dev/null
 }
 
 # accessing the NEWS file as root

@@ -228,14 +228,18 @@ show_pid (pid_t pid)
     return true;
 }
 
+/* this checks whether the string is valid UTF-8, assuming main() successfully
+   switched to a UTF-8 locale.  */
 static bool
-is_valid_string(const char *str)
+is_valid_mb_string(const char *str)
 {
     mbstate_t st = {0};
-    char32_t    cp;
+    char32_t cp;
+    const char *end = str + strlen(str);
     while (1) {
-        size_t n = mbrtoc32(&cp, str, MB_CUR_MAX, &st);
-        if (n == (size_t)-1 || n == (size_t)-2) /* illegal or incomplete */
+        size_t n = mbrtoc32(&cp, str, end - str, &st);
+        if (n == (size_t)-1 || n == (size_t)-2 || n == (size_t)-3)
+            /* illegal or incomplete */
             return false;
         if (n == 0) /* reached terminating NUL */
             return true;
@@ -245,8 +249,8 @@ is_valid_string(const char *str)
 
 static bool
 print_json_str (const char* key, const char* value) {
-    bool valid_value = is_valid_string(value);
-    if (valid_value) {
+    bool valid_mb_value = is_valid_mb_string(value);
+    if (valid_mb_value) {
         printf("\"%s\":\"", key);
         for (int i = 0; value[i] != 0; i++) {
             unsigned char c = value[i];
@@ -271,7 +275,7 @@ print_json_str (const char* key, const char* value) {
             printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
         putchar(']');
     }
-    return !valid_value;
+    return valid_mb_value;
 }
 
 /**
@@ -293,7 +297,7 @@ static void
 print_event (const struct fanotify_event_metadata *data,
              const struct timeval *event_time)
 {
-    const char* problems[MAX_PROBLEMS];
+    static const char* problems[MAX_PROBLEMS];
     int problem_idx = 0;
     int event_fd = data->fd;
     static char printbuf[100];
@@ -396,26 +400,27 @@ print_event (const struct fanotify_event_metadata *data,
         add_problem("Event deleted, cannot determine path.");
     }
 
+    if (option_json) putchar('{');
+
     /* print event */
     if (option_timestamp == 1) {
         strftime (printbuf, sizeof (printbuf), "%H:%M:%S", localtime (&event_time->tv_sec));
-        printf (option_json ? "{\"timestamp\":\"%s.%06li\"" : "%s.%06li ", printbuf, event_time->tv_usec);
+        printf (option_json ? "\"timestamp\":\"%s.%06li\"," : "%s.%06li ", printbuf, event_time->tv_usec);
     } else if (option_timestamp == 2) {
-        printf (option_json ? "{\"timestamp\":%li.%06li" : "%li.%06li ", event_time->tv_sec, event_time->tv_usec);
+        printf (option_json ? "\"timestamp\":%li.%06li," : "%li.%06li ", event_time->tv_sec, event_time->tv_usec);
     }
 
     /* print user and group */
     if (option_user && proc_fd_stat.st_uid != (uid_t)-1)
         snprintf(printbuf, sizeof printbuf,
-                 option_json ? ",\"uid\":%u,\"gid\":%u" : " [%u:%u]",
+                 option_json ? "\"uid\":%u,\"gid\":%u," : " [%u:%u]",
                  proc_fd_stat.st_uid, proc_fd_stat.st_gid);
     else
         printbuf[0] = '\0';
 
     if (option_json) {
-        putchar(option_timestamp ? ',' : '{');
         if (procname_pid >= 0) {
-            if (print_json_str("comm", procname)) {
+            if (!print_json_str("comm", procname)) {
                 add_problem("comm contains invalid UTF-8, comm_raw contains the bytes.");
             }
             putchar(',');
@@ -427,7 +432,7 @@ print_event (const struct fanotify_event_metadata *data,
                    , major (st.st_dev), minor (st.st_dev), st.st_ino);
         if (got_path) {
             putchar(',');
-            if (print_json_str("path", pathname)) {
+            if (!print_json_str("path", pathname)) {
                 add_problem("path contains invalid UTF-8, path_raw contains the bytes.");
             }
         }
@@ -710,9 +715,10 @@ main (int argc, char** argv)
     struct sigaction sa;
     struct timeval event_time;
 
-    /* use a UTF-8 locale if possible so is_valid_string works as expected */
+    /* use a UTF-8 locale if possible so is_valid_mb_string works as expected */
     locale_t utf8 = newlocale(LC_CTYPE_MASK, "C.UTF-8", NULL);
-    if (!utf8) utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
+    if (!utf8)
+        utf8 = newlocale(LC_CTYPE_MASK, "en_US.UTF-8", NULL);
     if (utf8)
         uselocale(utf8);
     else
