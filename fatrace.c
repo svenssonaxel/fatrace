@@ -321,9 +321,8 @@ print_event (const struct fanotify_event_metadata *data,
 
         /* get user and group */
         if (option_user) {
-            if (fstat (proc_fd, &proc_fd_stat) < 0) {
+            if (fstat (proc_fd, &proc_fd_stat) < 0)
                 debug ("failed to stat /proc/%i: %m", data->pid);
-            }
         }
 
         close (proc_fd);
@@ -356,9 +355,9 @@ print_event (const struct fanotify_event_metadata *data,
 
     bool got_path = false;
     struct stat st = { .st_uid = -1 };
-    if (option_json && fstat (event_fd, &st) < 0)
-        debug("failed to stat event_fd, cannot determine device or inode");
     if (event_fd >= 0) {
+        if (option_json && fstat (event_fd, &st) < 0)
+            warn ("stat");
         /* try to figure out the path name */
         snprintf (printbuf, sizeof (printbuf), "/proc/self/fd/%i", event_fd);
         ssize_t len = readlink (printbuf, pathname, sizeof (pathname));
@@ -382,7 +381,8 @@ print_event (const struct fanotify_event_metadata *data,
         snprintf (pathname, sizeof (pathname), "(deleted)");
     }
 
-    if (option_json) putchar('{');
+    if (option_json)
+        putchar('{');
 
     /* print event */
     if (option_timestamp == 1) {
