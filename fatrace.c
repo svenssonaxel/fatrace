@@ -42,8 +42,6 @@
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <ctype.h>
-#include <uchar.h>
-#include <locale.h>
 
 #define BUFSIZE 256*1024
 
@@ -228,56 +226,55 @@ show_pid (pid_t pid)
     return true;
 }
 
-/* This checks whether the string is valid UTF-8. If main() successfully
-   switched to a UTF-8 locale we'll be able to detect all valid UTF-8 strings.
-   Otherwise, we are on locale C and we can only validate ASCII, which is a
-   subset of UTF-8. Therefore, in all cases, a true return value means valid
-   UTF-8. */
-static bool
-is_valid_utf8(const char *str)
-{
-    mbstate_t st = {0};
-    char32_t cp;
-    /* point beyond terminating null since mbrtoc32 needs to read it. */
-    const char *end = str + strlen(str) + 1;
-    while (1) {
-        size_t n = mbrtoc32(&cp, str, end - str, &st);
-        if (n == (size_t)-1 || n == (size_t)-2 || n == (size_t)-3)
-            /* illegal or incomplete */
-            return false;
-        if (n == 0) /* reached terminating NUL */
-            return true;
-        str += n; /* advance to next glyph */
+/* if str is a valid BMP-only UTF-8 string without need of any JSON escaping,
+   return the byte length, otherwise -1. */
+static inline int
+nonfunny_utf8_len (const char* str) {
+    const unsigned char* s = (unsigned char*)str;
+    int i = 0;
+    while (str[i] != 0) {
+        unsigned char c = s[i];
+        // Unescaped ASCII
+        if (0x20 <= c && c != '"' && c != '\\' && c <= 0x7e) {
+            i++; continue;
+        }
+        // it's ok to read s[i+1] since we know s[i] != 0
+        int mbc = c<<8 | s[i+1];
+        if (// 2-char: 110xxxxx 10xxxxxx
+            (mbc & 0xe0c0) == 0xc080 &&
+            // but not 1100000x 10xxxxxx (overlong)
+            (mbc & 0xfec0) != 0xc080) {
+            i+=2; continue;
+        }
+        if (s[i+1] == 0)
+            return -1;
+        // it's ok to read s[i+2] since we know s[i+1] != 0
+        mbc = mbc<<8 | s[i+2];
+        if (// 3-char: 1110xxxx 10xxxxxx 10xxxxxx
+            (mbc & 0xf0c0c0) == 0xe08080 &&
+            // but not 11100000 100xxxxx 10xxxxxx (overlong)
+            (mbc & 0xffe0c0) != 0xe08080 &&
+            // neither 11101101 101xxxxx 10xxxxxx (reserved for surrogates)
+            (mbc & 0xffe0c0) != 0xeda080) {
+            i+=3; continue;
+        }
+        return -1;
     }
+    return i;
 }
 
 static void
 print_json_str (const char* key, const char* value) {
-    bool valid_utf8 = is_valid_utf8(value);
-    if (valid_utf8) {
-        printf("\"%s\":\"", key);
-        for (int i = 0; value[i] != 0; i++) {
-            unsigned char c = value[i];
-            switch(c) {
-                case '"':  printf("\\\""); continue;
-                case '\\': printf("\\\\"); continue;
-                case '\b': printf("\\b"); continue;
-                case '\f': printf("\\f"); continue;
-                case '\n': printf("\\n"); continue;
-                case '\r': printf("\\r"); continue;
-                case '\t': printf("\\t"); continue;
-            }
-            if (c < 0x20 || c == 0x7e) {
-                printf("\\u%04x", c); continue;
-            }
-            putchar(c);
-        }
-        putchar('"');
+    int value_len = nonfunny_utf8_len (value);
+    if (value_len >= 0) {
+        printf ("\"%s\":\"", key);
+        fwrite (value, 1, value_len, stdout);
+        putchar ('"');
     } else {
-        printf("\"%s_raw\":[", key);
+        printf ("\"%s_raw\":[", key);
         for (int i = 0; value[i] != 0; i++)
-            printf(i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
-        putchar(']');
+            printf (i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
+        putchar (']');
     }
 }
 
@@ -679,30 +676,6 @@ signal_handler (int signal)
         _exit (EXIT_FAILURE);
 }
 
-static locale_t locale = (locale_t)0;
-static void set_utf8_locale() {
-    /* set system locale */
-    const char *current_character_set = setlocale(LC_CTYPE, NULL);
-    /* if we already have a UTF-8 locale, do nothing */
-    if (current_character_set &&
-        (strcasestr(current_character_set, "UTF-8") ||
-         strcasestr(current_character_set, "UTF8")))
-        return;
-    /* try to switch to a UTF-8 locale if possible */
-    const char *cand[] = { "C.UTF-8", "en_US.UTF-8", "POSIX.UTF-8", NULL };
-    for (int i = 0; cand[i]; i++) {
-        locale = newlocale(LC_CTYPE_MASK, cand[i], NULL);
-        if (locale)
-            break;
-    }
-    if (!locale)
-        /* fallback to C locale, since ASCII is a subset of UTF-8 */
-        locale = newlocale(LC_CTYPE_MASK, "C", NULL);
-    if (!locale)
-        err (EXIT_FAILURE, "Failed to set locale");
-    uselocale(locale);
-}
-
 int
 main (int argc, char** argv)
 {
@@ -712,10 +685,6 @@ main (int argc, char** argv)
     struct fanotify_event_metadata *data;
     struct sigaction sa;
     struct timeval event_time;
-
-    /* In order for is_valid_utf8 to work as expected, switch to a UTF-8 locale
-       if possible, with ASCII as fallback. */
-    set_utf8_locale();
 
     /* always ignore events from ourselves (writing log file) */
     ignored_pids[ignored_pids_len++] = getpid ();
