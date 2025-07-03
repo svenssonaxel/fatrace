@@ -239,7 +239,7 @@ nonfunny_utf8_len (const char* str) {
             i++; continue;
         }
         // it's ok to read s[i+1] since we know s[i] != 0
-        int mbc = c<<8 | s[i+1];
+        uint32_t mbc = c<<8 | s[i+1];
         if (// 2-char: 110xxxxx 10xxxxxx
             (mbc & 0xe0c0) == 0xc080 &&
             // but not 1100000x 10xxxxxx (overlong)
