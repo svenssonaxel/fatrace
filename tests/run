@@ -2,7 +2,7 @@
 set -eu
 
 MYDIR=$(dirname $(readlink -f "$0"))
-export PATH=$(pwd):$MYDIR:$PATH
+export PATH=$(pwd):$PATH
 
 for t in \
     fatrace \
