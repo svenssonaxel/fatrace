@@ -263,15 +263,22 @@ nonfunny_utf8_len (const char* str) {
     return i;
 }
 
-static void
+static inline void
 print_json_str (const char* key, const char* value) {
     int value_len = nonfunny_utf8_len (value);
+    int key_len = strlen(key);
     if (value_len >= 0) {
-        printf ("\"%s\":\"", key);
+        putchar('"');
+        fwrite (key, 1, key_len, stdout);
+        putchar('"');
+        putchar(':');
+        putchar('"');
         fwrite (value, 1, value_len, stdout);
         putchar ('"');
     } else {
-        printf ("\"%s_raw\":[", key);
+        putchar('"');
+        fwrite (key, 1, key_len, stdout);
+        fwrite ("_raw\":[", 1, 7, stdout);
         for (int i = 0; value[i] != 0; i++)
             printf (i ? ",%d" : "%d", (unsigned int)(unsigned char)(value[i]));
         putchar (']');
