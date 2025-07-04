@@ -226,8 +226,8 @@ show_pid (pid_t pid)
     return true;
 }
 
-/* if str is a valid BMP-only UTF-8 string without need of any JSON escaping,
-   return the byte length, otherwise -1. */
+/* if str is a valid UTF-8 string without need of any JSON escaping, return the
+   byte length, otherwise -1. */
 static inline int
 nonfunny_utf8_len (const char* str) {
     const unsigned char* s = (unsigned char*)str;
@@ -257,6 +257,18 @@ nonfunny_utf8_len (const char* str) {
             // neither 11101101 101xxxxx 10xxxxxx (reserved for surrogates)
             (mbc & 0xffe0c0) != 0xeda080) {
             i+=3; continue;
+        }
+        if (s[i+2] == 0)
+            return -1;
+        // it's ok to read s[i+3] since we know s[i+2] != 0
+        mbc = mbc<<8 | s[i+3];
+        if (// 4-char: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+            (mbc & 0xf8c0c0c0) == 0xf0808080 &&
+            // but not 11110000 1000xxxx 10xxxxxx 10xxxxxx (overlong)
+            (mbc & 0xfff0c0c0) != 0xf0808080 &&
+            // neither 11110PPP 10PPxxxx 10xxxxxx 10xxxxxx, PPPPP>0x10 (too big)
+            (mbc & 0x07300000) <= 0x04000000) {
+            i+=4; continue;
         }
         return -1;
     }
