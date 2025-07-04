@@ -47,4 +47,4 @@ check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobo
 check_log '.comm=="bash" and .pid=='"$(cat "$tmp/4-pid")"' and .path=="'"$tmp/4-pid"'"'
 
 # device and inode
-check_log '.comm=="touch" and .path=="'"$tmp/5-good.tmp"'" and .device==['"$(stat -c %Hd,%Ld "$tmp/5-good.tmp")"'] and .inode=='"$(stat -c %i "$tmp/5-good.tmp")"
+check_log '.comm=="touch" and .path=="'"$tmp/5-good.tmp"'" and .device=='"$(stat -c '{"major":%Hd,"minor":%Ld}' "$tmp/5-good.tmp")"' and .inode=='"$(stat -c %i "$tmp/5-good.tmp")"

@@ -415,7 +415,7 @@ print_event (const struct fanotify_event_metadata *data,
         printf ("\"pid\":%i,%s\"types\":\"%s\"",
                 data->pid, printbuf, mask2str (data->mask));
         if (st.st_uid != (uid_t)-1)
-            printf(",\"device\":[%i,%i],\"inode\":%ld"
+            printf(",\"device\":{\"major\":%i,\"minor\":%i},\"inode\":%ld"
                    , major (st.st_dev), minor (st.st_dev), st.st_ino);
         if (got_path) {
             putchar(',');
