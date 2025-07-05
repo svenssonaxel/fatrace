@@ -35,15 +35,22 @@ check_log() {
     jq -e "select($1)" < $LOG > /dev/null
 }
 
+echo cp $LOG log-uj
+cp $LOG log-uj
+
 # accessing the NEWS file as root
 check_log '.comm=="head" and (.types|test("^RC?O?$")) and .path=="'"$(pwd)/NEWS"'"'
+echo DBG 0
 
 # accessing the NEWS file as user
 check_log '.comm=="tail" and .uid=='"$(id -u $USER)"' and .gid=='"$(id -g $USER)"' and (.types|test("^RC?O?$")) and .path=="'"$(pwd)/NEWS"'"'
+echo DBG 1
 
 # file creation as root
 TEST_FILE_ROOT=$(realpath "$TEST_FILE_ROOT")
 check_log '.comm=="touch" and .uid==0 and .gid==0 and (.types|test("^C?W?O$")) and .path=="'"$TEST_FILE_ROOT"'"'
+echo DBG 2
 
 TEST_FILE_USER=$(realpath "$TEST_FILE_USER")
 check_log '.comm=="touch" and .uid=='"$(id -u $USER)"' and .gid=='"$(id -g $USER)"' and (.types|test("^C?W?O$")) and .path=="'"$TEST_FILE_USER"'"'
+echo DBG 3
