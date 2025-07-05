@@ -16,6 +16,7 @@ touch "tmp/1-good.tmp"
 touch "tmp/2-bad-$(printf '\001').tmp"
 
 # uid and gid
+sleep .1
 runuser -u nobody touch "tmp/3-good.tmp"
 
 # pid
