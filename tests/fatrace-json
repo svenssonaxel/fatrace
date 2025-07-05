@@ -72,7 +72,9 @@ utf8_test_cases() {
     $1 bad  "$(printf '\340\217\277\277')-tmp" # overlong U+ffff
     $1 good "$(printf '\364\217\277\277')-tmp" # U+10ffff (unassigned but valid)
     $1 bad  "$(printf '\364\220\200\200')-tmp" # U+110000 (too big)
-    # todo stray continuation bytes
+    # continuation bytes
+    $1 bad  "$(printf '\200')-tmp" # 0x80
+    $1 bad  "$(printf '\277')-tmp" # 0xbf
 }
 run_utf8_test() { touch "tmp/utf8-$1-$2"; }
 utf8_test_cases run_utf8_test
@@ -114,33 +116,46 @@ str_to_byte_array() {
 
 # path_raw
 echo DBG 5
-check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp")"
+check_log '.comm=="touch" and .path_raw==$pathraw' \
+          --argjson pathraw "$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp")"
 
 # uid and gid
 echo DBG 6
-check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobody)"' and .path=="'"$tmp/3-good.tmp"'"'
+check_log '.comm=="touch" and .uid==$uid and .gid==$gid and .path==$path' \
+          --argjson uid "$(id -u nobody)" \
+          --argjson gid "$(id -g nobody)" \
+          --arg path "$tmp/3-good.tmp"
 
 # pid
 echo DBG 7
-check_log '.comm=="bash" and .pid=='"$(cat "$tmp/4-pid")"' and .path=="'"$tmp/4-pid"'"'
+check_log '.comm=="bash" and .pid==$pid and .path==$path' \
+          --argjson pid "$(cat "$tmp/4-pid")" \
+          --arg path "$tmp/4-pid"
 
 # device and inode
 echo DBG 8
-check_log '.comm=="touch" and .path=="'"$tmp/5-good.tmp"'" and .device=='"$(stat -c '{"major":%Hd,"minor":%Ld}' "$tmp/5-good.tmp")"' and .inode=='"$(stat -c %i "$tmp/5-good.tmp")"
+check_log '.comm=="touch" and .path==$path and .device==$device and .inode==$inode' \
+          --arg path "$tmp/5-good.tmp" \
+          --argjson device "$(stat -c '{"major":%Hd,"minor":%Ld}' "$tmp/5-good.tmp")" \
+          --argjson inode "$(stat -c %i "$tmp/5-good.tmp")"
 
 # UTF-8
 check_utf8_test() {
     file="$tmp/utf8-$1-$2"
     if [ "$1" = good ]; then
         echo DBG 9 "$1-$2"
-        check_log '.comm=="touch" and .path=="'"$file"'"'
+        check_log '.comm=="touch" and .path==$path' \
+                  --arg path "$file"
         echo DBG 10 "$1-$2"
-        check_log_absence '.path_raw=='"$(str_to_byte_array "$file")"
+        check_log_absence '.path_raw==$pathraw' \
+                          --argjson pathraw "$(str_to_byte_array "$file")"
     elif [ $1 == bad ]; then
         echo DBG 11 "$1-$2"
-        check_log_absence '.path==$file' --arg file "$file"
+        check_log_absence '.path==$file' \
+                          --arg file "$file"
         echo DBG 12 "$1-$2"
-        check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$file")"
+        check_log '.comm=="touch" and .path_raw==$pathraw' \
+                  --argjson pathraw "$(str_to_byte_array "$file")"
     else
         echo "Bug in test case: $1 $2" >&2
         exit 1
