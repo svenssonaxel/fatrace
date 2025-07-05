@@ -112,7 +112,7 @@ str_to_byte_array() {
 
 # path_raw
 echo DBG 5
-check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp-bad")"
+check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp")"
 
 # uid and gid
 echo DBG 6
