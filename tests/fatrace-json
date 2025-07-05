@@ -140,7 +140,7 @@ check_utf8_test() {
                   --arg path "$file"
         check_log_absence '.path_raw==$pathraw' \
                           --argjson pathraw "$(str_to_byte_array "$file")"
-    elif [ $1 == bad ]; then
+    elif [ $1 = bad ]; then
         check_log_absence '.path==$file' \
                           --arg file "$file"
         check_log '.comm=="touch" and .path_raw==$pathraw' \
