@@ -364,6 +364,12 @@ print_event (const struct fanotify_event_metadata *data,
     snprintf (printbuf, sizeof (printbuf), "/proc/%i", data->pid);
     int proc_fd = open (printbuf, O_RDONLY | O_DIRECTORY);
     if (proc_fd >= 0) {
+        /* get user and group */
+        if (option_user) {
+            if (fstat (proc_fd, &proc_fd_stat) < 0)
+                debug ("failed to stat /proc/%i: %m", data->pid);
+        }
+
         /* read process name */
         int procname_fd = openat (proc_fd, "comm", O_RDONLY);
         ssize_t len = read (procname_fd, procname, sizeof (procname));
@@ -378,12 +384,6 @@ print_event (const struct fanotify_event_metadata *data,
         }
 
         close (procname_fd);
-
-        /* get user and group */
-        if (option_user) {
-            if (fstat (proc_fd, &proc_fd_stat) < 0)
-                debug ("failed to stat /proc/%i: %m", data->pid);
-        }
 
         close (proc_fd);
     } else {
