@@ -82,10 +82,12 @@ wait
 
 echo "checking log..."
 check_log() {
-    jq -e "select($1)" < $LOG > /dev/null
+    select_expr="$1"
+    shift
+    jq -e "select($select_expr)" "$@" < $LOG > /dev/null
 }
 check_log_absence() {
-    if check_log "$1"; then
+    if check_log "$@"; then
         return 1
     else
         if [ "$?" = 4 ]; then
@@ -136,7 +138,7 @@ check_utf8_test() {
         check_log_absence '.path_raw=='"$(str_to_byte_array "$file")"
     elif [ $1 == bad ]; then
         echo DBG 11 "$1-$2"
-        check_log_absence '.path=="'"$file"'"'
+        check_log_absence '.path==$file' --arg file "$file"
         echo DBG 12 "$1-$2"
         check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$file")"
     else
