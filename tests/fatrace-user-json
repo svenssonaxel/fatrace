@@ -8,23 +8,28 @@ trap "rm -rf tmp" EXIT INT QUIT PIPE
 
 LOG="$AUTOPKGTEST_TMP/fatrace.log"
 echo "starting fatrace..."
-fatrace --current-mount --user -s 2 -o $LOG --json &
+fatrace --current-mount --user -s 3 -o $LOG --json &
 sleep 1
 
 echo "read a file as root ..."
 head NEWS > /dev/null
 
 echo "read a file as user ..."
+sleep .1
 runuser -u $USER tail NEWS > /dev/null
 
 echo "create/remove a file as root..."
 TEST_FILE_ROOT=testroot.txt
+sleep .1
 touch "$TEST_FILE_ROOT"
+sleep .1
 rm "$TEST_FILE_ROOT"
 
 echo "create/remove a file as usr..."
 TEST_FILE_USER=tmp/test$USER.txt
+sleep .1
 runuser -u $USER touch "$TEST_FILE_USER"
+sleep .1
 runuser -u $USER rm "$TEST_FILE_USER"
 
 echo "waiting for fatrace..."
