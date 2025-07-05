@@ -74,7 +74,7 @@ utf8_test_cases() {
     $1 bad  "$(printf '\364\220\200\200')-tmp" # U+110000 (too big)
     # todo stray continuation bytes
 }
-run_utf_test() { touch "tmp/utf8-$1-$2"; }
+run_utf8_test() { touch "tmp/utf8-$1-$2"; }
 utf8_test_cases run_utf8_test
 
 echo "waiting for fatrace..."
