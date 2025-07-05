@@ -97,7 +97,11 @@ check_log_absence() {
 
 tmp="$(realpath tmp)"
 
+echo cp $LOG log-j
+cp $LOG log-j
+
 # path
+echo DBG 4
 check_log '.comm=="touch" and .path=="'"$tmp/1-good.tmp"'"'
 
 str_to_byte_array() {
@@ -107,25 +111,33 @@ str_to_byte_array() {
 }
 
 # path_raw
+echo DBG 5
 check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp-bad")"
 
 # uid and gid
+echo DBG 6
 check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobody)"' and .path=="'"$tmp/3-good.tmp"'"'
 
 # pid
+echo DBG 7
 check_log '.comm=="bash" and .pid=='"$(cat "$tmp/4-pid")"' and .path=="'"$tmp/4-pid"'"'
 
 # device and inode
+echo DBG 8
 check_log '.comm=="touch" and .path=="'"$tmp/5-good.tmp"'" and .device=='"$(stat -c '{"major":%Hd,"minor":%Ld}' "$tmp/5-good.tmp")"' and .inode=='"$(stat -c %i "$tmp/5-good.tmp")"
 
 # UTF-8
 check_utf8_test() {
     file="$tmp/utf8-$1-$2"
     if [ "$1" = good ]; then
+        echo DBG 9 "$1-$2"
         check_log '.comm=="touch" and .path=="'"$file"'"'
+        echo DBG 10 "$1-$2"
         check_log_absence '.path_raw=='"$(str_to_byte_array "$file")"
     elif [ $1 == bad ]; then
+        echo DBG 11 "$1-$2"
         check_log_absence '.path=="'"$file"'"'
+        echo DBG 12 "$1-$2"
         check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$file")"
     else
         echo "Bug in test case: $1 $2" >&2
@@ -135,5 +147,7 @@ check_utf8_test() {
 utf8_test_cases check_utf8_test
 
 # Property tests
+echo DBG 13
 check_log_absence '(.|has("path")|not) and (.|has("path_raw")|not)'
+echo DBG 14
 check_log_absence '(.|has("comm")|not) and (.|has("comm_raw")|not)'
