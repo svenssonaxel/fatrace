@@ -107,7 +107,7 @@ str_to_byte_array() {
 }
 
 # path_raw
-check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_aray "$tmp/2-bad-$(printf '\001').tmp-bad")"
+check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$tmp/2-bad-$(printf '\001').tmp-bad")"
 
 # uid and gid
 check_log '.comm=="touch" and .uid=='"$(id -u nobody)"' and .gid=='"$(id -g nobody)"' and .path=="'"$tmp/3-good.tmp"'"'
@@ -123,10 +123,10 @@ check_utf8_test() {
     file="$tmp/utf8-$1-$2"
     if [ "$1" = good ]; then
         check_log '.comm=="touch" and .path=="'"$file"'"'
-        check_log_absence '.path_raw=='"$(str_to_byte_aray "$file")"
+        check_log_absence '.path_raw=='"$(str_to_byte_array "$file")"
     elif [ $1 == bad ]; then
         check_log_absence '.path=="'"$file"'"'
-        check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_aray "$file")"
+        check_log '.comm=="touch" and .path_raw=='"$(str_to_byte_array "$file")"
     else
         echo "Bug in test case: $1 $2" >&2
         exit 1
