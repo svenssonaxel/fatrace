@@ -165,6 +165,6 @@ utf8_test_cases check_utf8_test
 
 # Property tests
 echo DBG 13
-check_log_absence '(.|has("path")|not) and (.|has("path_raw")|not)'
+check_log_absence '(.|has("path")) and (.|has("path_raw"))'
 echo DBG 14
-check_log_absence '(.|has("comm")|not) and (.|has("comm_raw")|not)'
+check_log_absence '(.|has("comm")) and (.|has("comm_raw"))'
