@@ -102,7 +102,7 @@ check_log '.comm=="touch" and .path=="'"$tmp/1-good.tmp"'"'
 
 str_to_byte_array() {
     echo -n '['
-    echo -n "$1" | od -An -v -t u1 | tr -s ' \n' , | sed 's/^,|,$//g'
+    echo -n "$1" | od -An -v -t u1 | tr -s ' \n' , | sed 's/^,//;s/,$//'
     echo -n ']'
 }
 
