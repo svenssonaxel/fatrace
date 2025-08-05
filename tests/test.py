@@ -75,13 +75,9 @@ class FatraceRunner:
         self.process.wait(timeout=10)
         out, err = self.process.communicate()
         assert out == ""
-        if out:
-            print(f"\nstdout:\n|{out}|")
         with open(self.output_file, 'r') as f:
             self.log_content = f.read()
         self.stderr_content = err
-        if err:
-            print(f"\nstderr:\n{err}")
         self.log_dir.cleanup()
 
     def has_log(self, pattern: str) -> bool:
@@ -646,6 +642,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         f.finish()
         f_json.finish()
 
+        assert "Directories are too many to watch separately." not in f.stderr_content
+        assert "Directories are too many to watch separately." not in f_json.stderr_content
+
         f.assert_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(yes1)}/fileA")
         f.assert_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(yes1)}/sub/fileB")
         f.assert_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(yes2)}/fileC")
@@ -691,6 +690,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
         f.finish()
         f_json.finish()
+
+        assert "Directories are too many to watch separately." in f.stderr_content
+        assert "Directories are too many to watch separately." in f_json.stderr_content
 
         for i in range(5):
             f.assert_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(yesmany)}/existing-dir-{i}/file")
