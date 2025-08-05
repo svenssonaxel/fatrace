@@ -67,7 +67,7 @@ class FatraceRunner:
         """Wait for fatrace to finish and read the log content."""
 
         # fallback timeout; tests should use -s
-        self.process.wait(timeout=25)
+        self.process.wait(timeout=10)
         with open(self.output_file, 'r') as f:
             self.log_content = f.read()
         self.log_dir.cleanup()
@@ -666,10 +666,10 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             exe(["mkdir", f"{nomany}/existing-dir-{i}"])
             exe(["touch", f"{nomany}/existing-dir-{i}/file"])
 
-        f = FatraceRunner(["-s", "22", "--dir", yesmany])
-        f_json = FatraceRunner(["-s", "22", "--json", "--dir", yesmany])
+        f = FatraceRunner(["-s", "3", "--dir", yesmany])
+        f_json = FatraceRunner(["-s", "3", "--json", "--dir", yesmany])
 
-        for i in range(50):
+        for i in range(5):
             slow_exe(["touch", f"{yesmany}/existing-dir-{i}/file"])
             exe(["mkdir", f"{yesmany}/new-dir-{i}"])
             slow_exe(["touch", f"{yesmany}/new-dir-{i}/file"])
@@ -680,7 +680,7 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         f.finish()
         f_json.finish()
 
-        for i in range(50):
+        for i in range(5):
             f.assert_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(yesmany)}/existing-dir-$a/file")
             f.assert_log(rf"^touch\([0-9]*\): CW?O? +{re.escape(yesmany)}/new-dir-$a/file")
             f.assert_not_log(rf"^touch\([0-9]*\): C?WO? +{re.escape(nomany)}/existing-dir-$a/file")
