@@ -652,50 +652,6 @@ static int mark_cb(const char *fpath, const struct stat*, int typeflag,
 }
 
 /**
- * find_mount_point:
- *
- * Find the mount point that contains the given directory path.
- */
-void
-find_mount_point(const char *dir_path, char *mount_path)
-{
-    mount_path[0] = '\0';
-    FILE *fp = fopen("/proc/self/mountinfo", "r");
-    if (!fp) {
-        warn("Failed to open /proc/self/mountinfo");
-        return;
-    }
-    int best_len = 0;
-    char line[1024];
-    while (fgets(line, sizeof(line), fp)) {
-        char *saveptr;
-        char *mount_path;
-        /* Parse mountinfo format: skip first 4 fields, 5th is mount point */
-        strtok_r(line, " ", &saveptr);  /* mount_id */
-        strtok_r(NULL, " ", &saveptr);  /* parent_id */
-        strtok_r(NULL, " ", &saveptr);  /* major:minor */
-        strtok_r(NULL, " ", &saveptr);  /* root */
-        mount_path = strtok_r(NULL, " ", &saveptr); /* mount_point */
-        int dir_path_len = strlen (dir_path);
-        if (mount_path) {
-            int mount_len = strlen(mount_path);
-            /* Check if this mount point is a prefix of our directory and is the longest match */
-            if (best_len < mount_len && mount_len <= dir_path_len &&
-                strncmp(dir_path, mount_path, mount_len) == 0 &&
-                (dir_path[mount_len] == '\0' || dir_path[mount_len] == '/')) {
-                best_len = mount_len;
-            }
-        }
-    }
-    if (0 < best_len) {
-        memcpy (mount_path, dir_path, best_len);
-        mount_path[best_len] = '\0';
-    }
-    fclose(fp);
-    return;
-}
-
-/**
  * setup_fanotify:
  *
  * @fan_fd: fanotify file descriptor as returned by fanotify_init().
@@ -724,12 +680,9 @@ setup_fanotify (int fan_fd)
             warnx ("Directories are too many to watch separately. "
                    "Watching parent mount points instead.");
             for (unsigned i = 0; i < option_dirs_len; i++) {
-                char mount_point[PATH_MAX];
-                find_mount_point(option_dirs[i], mount_point);
-                if (!mount_point[0]) continue; // todo
-                debug ("add mount watch for %s", mount_point);
-                do_mark(fan_fd, mount_point, false);
-                add_fsid(mount_point);
+                debug ("add mount watch for %s", option_dirs[i]);
+                do_mark(fan_fd, option_dirs[i], false);
+                add_fsid(option_dirs[i]);
             }
             return;
         }
