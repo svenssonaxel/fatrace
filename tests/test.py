@@ -121,7 +121,7 @@ class FatraceRunner:
                              "-----------------")
 
     def assert_not_json(self, condition_func: Callable[[dict], bool]) -> None:
-        if self.has_json(condition_func):
+        if not self.has_json(condition_func):
             return
         raise AssertionError("At least one JSON entry matched condition\n"
                              "---- Log content ----\n"
