@@ -608,8 +608,8 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         exe(["mkdir", no1])
         exe(["mkdir", no2])
 
-        f = FatraceRunner(["--current-mount", "-s", "3", "--dir", yes1, "--dir", yes2])
-        f_json = FatraceRunner(["--current-mount", "-s", "3", "--json", "--dir", yes1, "--dir", yes2])
+        f = FatraceRunner(["-s", "3", "--dir", yes1, "--dir", yes2])
+        f_json = FatraceRunner(["-s", "3", "--json", "--dir", yes1, "--dir", yes2])
 
         slow_exe(["mkdir", f"{yes1}/sub"])
         slow_exe(["mkdir", f"{yes2}/sub"])
@@ -666,8 +666,8 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             exe(["mkdir", f"{nomany}/existing-dir-{i}"])
             exe(["touch", f"{nomany}/existing-dir-{i}/file"])
 
-        f = FatraceRunner(["--current-mount", "-s", "22", "--dir", yesmany])
-        f_json = FatraceRunner(["--current-mount", "-s", "22", "--json", "--dir", yesmany])
+        f = FatraceRunner(["-s", "22", "--dir", yesmany])
+        f_json = FatraceRunner(["-s", "22", "--json", "--dir", yesmany])
 
         for i in range(50):
             slow_exe(["touch", f"{yesmany}/existing-dir-{i}/file"])
