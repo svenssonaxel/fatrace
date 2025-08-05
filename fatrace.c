@@ -677,8 +677,17 @@ setup_fanotify (int fan_fd)
             }
             return;
         } else {
-            warnx ("Directories are too many to watch separately. Watching all"
-                   " files instead.");
+            warnx ("Directories are too many to watch separately. "
+                   "Watching mounts containing --dir arguments instead.");
+            /* When we have too many subdirectories, just watch the top-level
+             * directories that were specified, not all mounts */
+            mark_mode = FAN_MARK_ADD | FAN_MARK_MOUNT;
+            for (unsigned i = 0; i < option_dirs_len; i++) {
+                debug ("add mount watch for %s", option_dirs[i]);
+                do_mark (fan_fd, option_dirs[i], false);
+                add_fsid (option_dirs[i]);
+            }
+            return; /* Don't fall through to watching all mounts */
         }
     }
 
