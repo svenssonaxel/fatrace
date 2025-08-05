@@ -73,10 +73,15 @@ class FatraceRunner:
 
         # fallback timeout; tests should use -s
         self.process.wait(timeout=10)
-        assert self.process.stdout == ""
+        out, err = self.process.communicate()
+        assert out == ""
+        if out:
+            print(f"\nstdout:\n|{out}|")
         with open(self.output_file, 'r') as f:
             self.log_content = f.read()
-        self.stderr_content = self.process.stderr
+        self.stderr_content = err
+        if err:
+            print(f"\nstderr:\n{err}")
         self.log_dir.cleanup()
 
     def has_log(self, pattern: str) -> bool:
