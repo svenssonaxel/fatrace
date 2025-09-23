@@ -303,7 +303,7 @@ class FatraceTests(unittest.TestCase):
 
         # file deletion
         f.assert_log(lambda e: e["comm"] == "rm" and e["path"] == cwd and e["types"] == "D",
-                     rf"^rm.*:\s+D\s+{cwd_re}$")
+                     rf"^rm\(.*:\s+D\s+{cwd_re}$")
 
         # directory creation
         f.assert_log(lambda e: e["comm"] == "touch" and e["path"] == cwd and e["types"] == "+",
@@ -327,7 +327,7 @@ class FatraceTests(unittest.TestCase):
         f.assert_log(lambda e: e["comm"] == "ln" and e["path"] == cwd and e["types"] == "+",
                      rf"^ln.*:\s+\+\s+{cwd_re}$")
         f.assert_log(lambda e: e["comm"] == "rm" and e["path"] == cwd and e["types"] == "D",
-                     rf"^rm.*:\s+D\s+{cwd_re}$")
+                     rf"^rm\(.*:\s+D\s+{cwd_re}$")
 
     def test_command(self):
         f = FatraceRunner("--current-mount", "--command", "touch", "-s", "2", "--json")
@@ -431,7 +431,7 @@ class FatraceTests(unittest.TestCase):
         f.assert_log(lambda e: e["comm"]=="bash" and "W" in e["types"] and e["path"]==test_file_str,
                      rf"^bash.*\sC?WO?\s+{re.escape(test_file_str)}")
         f.assert_log(lambda e: e["comm"]=="rm" and e["types"] in ["", "D"] and e["path"]==mount_str,
-                     rf"^rm.*\sD?\s+{re.escape(mount_str)}")
+                     rf"^rm\(.*\sD?\s+{re.escape(mount_str)}$")
 
         # directory creation
         f.assert_log(lambda e: e["comm"]=="touch" and e["types"] == "+" and e["path"]==mount_str,
@@ -496,7 +496,8 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             e["parents"][2] == {"pid": test_pid, "comm": "python3", "exe": str(python_exe)} and
             e["parents"][-1] == {"pid": 1, "comm": init_comm, "exe": str(init_exe)}
         ),
-            rf"^touch.*exe={re.escape(str(touch_exe))}, "
+            rf"^touch.* {re.escape(str(test_file))} "
+            rf"exe={re.escape(str(touch_exe))}, "
             rf"parents=\(pid={bash_pid} comm=bash exe={re.escape(str(bash_exe))}\),"
             rf"\(pid={python_pid} comm=python3 exe={re.escape(str(python_exe))}\),"
             rf"\(pid={test_pid} .* exe={re.escape(str(test_exe))}\),.*"
