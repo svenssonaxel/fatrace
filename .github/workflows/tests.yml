@@ -20,11 +20,11 @@ jobs:
       - name: Build
         run: make
 
-      - name: Run tests
-        run: sudo python3 -m unittest -v
-
       - name: Run linters
         run: make lint
+
+      - name: Run tests
+        run: sudo python3 -m unittest -v
 
   container:
     runs-on: ubuntu-latest
