@@ -11,7 +11,7 @@ import unittest
 import sys
 
 from pathlib import Path
-from typing import Callable, TypeAlias, TypedDict, Union
+from typing import Any, Callable, TypeAlias, TypedDict, Union
 
 class Device(TypedDict):
     major: int
@@ -40,21 +40,34 @@ Pred: TypeAlias = Callable[[Event], bool]
 TESTDIR = Path(__file__).parent.resolve()
 ROOTDIR = TESTDIR.parent.resolve()
 
-exe = subprocess.check_call
-
 # check if root fs is btrfs
 root_is_btrfs = subprocess.check_output(["findmnt", "--noheadings", "--output=FSTYPE", "/"]).strip() == b"btrfs"
 
+_exe_stream = None
+def _exe(argv_any: tuple[Any, ...], **kwargs) -> None:
+    argv: list[str] = [str(x) for x in argv_any]
+    print(f"Running command: {' '.join(argv)}", file=_exe_stream)
+    proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, **kwargs)
+    if proc.stdout:
+        print(f"stdout: {proc.stdout.decode()}", file=_exe_stream)
+    if proc.stderr:
+        print(f"Stderr: {proc.stderr.decode()}", file=_exe_stream)
+    assert proc.returncode == 0, f"Command {' '.join(argv)} failed with exit code {proc.returncode}."
 
-def slow_exe(argv: list[str], **kwargs) -> None:
+def exe(*argv: Any) -> None:
+    _exe(argv)
+
+def slow_exe(*argv: Any) -> None:
     """Run a command with tests/slow-exit.so
 
     Use this for test commands under fatrace, not for setup.
     """
     env = os.environ.copy()
     env["LD_PRELOAD"] = str(TESTDIR / "slow-exit.so")
-    exe(argv, env=env, **kwargs)
+    _exe(argv, env=env)
 
+def re_esc(thing):
+    return re.escape(str(thing))
 
 def which(cmd: str) -> str:
     w = shutil.which(cmd)
@@ -75,7 +88,8 @@ def retry_unmount(path: str) -> None:
 
 class FatraceRunner():
     """Run text and json fatrace runners in parallel. args must include `--json`."""
-    def __init__(self, *args: str) -> None:
+    def __init__(self, *args_any: Any) -> None:
+        args: list[str] = [str(x) for x in args_any]
         assert "--json" in args
         # create our own private log dir
         self.log_dir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory()
@@ -242,13 +256,15 @@ def parse_fatrace_text_line(line: bytes) -> Event:
 
 class FatraceTests(unittest.TestCase):
     def setUp(self):
+        global _exe_stream
+        _exe_stream = self._outcome.result.stream
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp_dir.cleanup)
         self.tmp_path = Path(self.tmp_dir.name)
 
         # isolated mount, so that --current-mount is shielded from other actions in the OS,
         # in particular writing our log file
-        exe(["mount", "-t", "tmpfs", "-o", "size=250M", "tmpfs", str(self.tmp_path)])
+        exe("mount", "-t", "tmpfs", "-o", "size=250M", "tmpfs", self.tmp_path)
         self.addCleanup(retry_unmount, str(self.tmp_path))
         # change away from mount to avoid EBUSY
         self.addCleanup(os.chdir, TESTDIR)
@@ -260,28 +276,28 @@ class FatraceTests(unittest.TestCase):
 
         # Create/write/remove a file
         test_file = self.tmp_path / "test.txt"
-        slow_exe(["touch", str(test_file)])
-        slow_exe(["bash", "-c", f"echo hello > '{test_file}'"])
-        slow_exe(["head", str(test_file)], stdout=subprocess.DEVNULL)
-        slow_exe(["rm", str(test_file)])
+        slow_exe("touch", test_file)
+        slow_exe("bash", "-c", f"echo hello > '{test_file}'")
+        slow_exe("head", test_file)
+        slow_exe("rm", test_file)
 
         # moving within same directory
-        slow_exe(["touch", str(test_file)])
+        slow_exe("touch", test_file)
         test_file_2 = self.tmp_path / "test.txt.2"
-        slow_exe(["mv", str(test_file), str(test_file_2)])
+        slow_exe("mv", test_file, test_file_2)
 
         # Create destination directory and move file there
         dest_dir = self.tmp_path / "dest"
-        slow_exe(["mkdir", str(dest_dir)])
+        slow_exe("mkdir", dest_dir)
         dest_file = dest_dir / "test.txt.2"
-        slow_exe(["mv", str(test_file_2), str(dest_file)])
-        slow_exe(["rm", str(dest_file)])
-        slow_exe(["rmdir", str(dest_dir)])
+        slow_exe("mv", test_file_2, dest_file)
+        slow_exe("rm", dest_file)
+        slow_exe("rmdir", dest_dir)
 
         # Test robustness against ELOOP
         link_file = self.tmp_path / "link"
-        slow_exe(["ln", "-s", "nothing", str(link_file)])
-        slow_exe(["rm", str(link_file)])
+        slow_exe("ln", "-s", "nothing", link_file)
+        slow_exe("rm", link_file)
 
         f.finish()
 
@@ -333,8 +349,8 @@ class FatraceTests(unittest.TestCase):
         f = FatraceRunner("--current-mount", "--command", "touch", "-s", "2", "--json")
 
         # Create files with different programs
-        slow_exe(["touch", str(self.tmp_path / "includeme")])
-        slow_exe(["dd", "if=/dev/zero", f"of={self.tmp_path}/notme", "bs=1", "count=1", "status=none"])
+        slow_exe("touch", self.tmp_path / "includeme")
+        slow_exe("dd", "if=/dev/zero", f"of={self.tmp_path}/notme", "bs=1", "count=1", "status=none")
 
         f.finish()
 
@@ -354,10 +370,10 @@ class FatraceTests(unittest.TestCase):
         # GNU coreutils (standalone binaries) and Rust coreutils (multi-call binary
         # that determines the utility based on argv[0])
         simple_touch = TESTDIR / "simple-touch"
-        exe(["cp", str(simple_touch), str(long_cmd)])
+        exe("cp", str(simple_touch), long_cmd)
 
         f = FatraceRunner("--current-mount", "--command", "VeryLongTouchCommand", "-s", "2", "--json")
-        slow_exe([str(long_cmd), str(self.tmp_path / "hello.txt")])
+        slow_exe(long_cmd, self.tmp_path / "hello.txt")
 
         f.finish()
 
@@ -373,46 +389,46 @@ class FatraceTests(unittest.TestCase):
         image_file = self.tmp_path / "btrfs.img"
         mount_dir = self.tmp_path / "mount"
 
-        exe(["dd", "if=/dev/zero", f"of={image_file}", "bs=1M", "count=200", "status=none"])
-        exe(["mkfs.btrfs", "--quiet", str(image_file)])
+        exe("dd", "if=/dev/zero", f"of={image_file}", "bs=1M", "count=200", "status=none")
+        exe("mkfs.btrfs", "--quiet", image_file)
         mount_dir.mkdir()
-        exe(["mount", "-o", "loop", str(image_file), str(mount_dir)])
+        exe("mount", "-o", "loop", image_file, mount_dir)
         self.addCleanup(retry_unmount, str(mount_dir))
         # Change away from mount point
         self.addCleanup(os.chdir, self.tmp_path)
 
         # Create subvolume
         os.chdir(mount_dir)
-        exe(["btrfs", "subvolume", "create", str(mount_dir / "subv1")])
+        exe("btrfs", "subvolume", "create", mount_dir / "subv1")
 
         # create initial file
-        slow_exe(["bash", "-c", "echo hello > world.txt"])
+        slow_exe("bash", "-c", "echo hello > world.txt")
 
         f = FatraceRunner("--current-mount", "-s", "2", "--json")
 
         # Read existing file
-        slow_exe(["head", str(mount_dir / "world.txt")], stdout=subprocess.DEVNULL)
+        slow_exe("head", mount_dir / "world.txt")
 
         # Standard file operations
         test_file = mount_dir / "test.txt"
-        slow_exe(["touch", str(test_file)])
-        slow_exe(["bash", "-c", f"echo hello > '{test_file}'"])
-        slow_exe(["rm", str(test_file)])
+        slow_exe("touch", test_file)
+        slow_exe("bash", "-c", f"echo hello > '{test_file}'")
+        slow_exe("rm", test_file)
 
         # Move a file within the same directory
-        slow_exe(["touch", str(test_file)])
+        slow_exe("touch", test_file)
         test_file_2 = mount_dir / "test.txt.2"
-        slow_exe(["mv", str(test_file), str(test_file_2)])
+        slow_exe("mv", test_file, test_file_2)
         dest_dir = mount_dir / "dest"
-        slow_exe(["mkdir", str(dest_dir)])
+        slow_exe("mkdir", dest_dir)
         dest_file = dest_dir / "test.txt.2"
-        slow_exe(["mv", str(test_file_2), str(dest_file)])
-        slow_exe(["rm", str(dest_file)])
-        slow_exe(["rmdir", str(dest_dir)])
+        slow_exe("mv", test_file_2, dest_file)
+        slow_exe("rm", dest_file)
+        slow_exe("rmdir", dest_dir)
 
         # Create file on subvolume
         subvol_file = mount_dir / "subv1" / "sub.txt"
-        slow_exe(["touch", str(subvol_file)])
+        slow_exe("touch", subvol_file)
 
         f.finish()
 
@@ -468,7 +484,7 @@ import os, subprocess
 subprocess.run(["bash", "-c", "touch {test_file}; echo $$ > {bash_pid_file}"])
 with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 '''
-        slow_exe([sys.executable, "-c", python_script])
+        slow_exe(sys.executable, "-c", python_script)
 
         f.finish()
 
@@ -514,20 +530,19 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         # Test user tracking functionality
         f = FatraceRunner("--current-mount", "--user", "-s", "4", "--json")
 
-        def slow_exe_nobody(argv: list[str], **kwargs) -> None:
-            exe(["runuser", "-u", "nobody",
-                 "env", "LD_PRELOAD=" + str(TESTDIR / "slow-exit.so")] + argv,
-                **kwargs)
+        def slow_exe_nobody(*argv: list[str]) -> None:
+            exe("runuser", "-u", "nobody",
+                 "env", "LD_PRELOAD=" + str(TESTDIR / "slow-exit.so"), *argv)
 
         # read test file as root
-        slow_exe(["head", str(test_file)], stdout=subprocess.DEVNULL)
+        slow_exe("head", test_file)
         # read test file as nobody
-        slow_exe_nobody(["tail", str(test_file)], stdout=subprocess.DEVNULL)
+        slow_exe_nobody("tail", test_file)
 
         # Create/remove a file as root
         test_file_root = self.tmp_path / "testroot.txt"
-        slow_exe(["touch", str(test_file_root)])
-        slow_exe(["rm", str(test_file_root)])
+        slow_exe("touch", test_file_root)
+        slow_exe("rm", test_file_root)
 
         # Create a world-writable directory for user operations
         user_tmp = self.tmp_path / "user_tmp"
@@ -536,14 +551,10 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
         # Create/remove a file as user 'nobody'
         test_file_user = user_tmp / "testnobody.txt"
-        slow_exe_nobody(["touch", str(test_file_user)])
-        slow_exe_nobody(["rm", str(test_file_user)])
+        slow_exe_nobody("touch", test_file_user)
+        slow_exe_nobody("rm", test_file_user)
 
         f.finish()
-
-        test_file_str = str(test_file)
-        test_file_root_str = str(test_file_root)
-        test_file_user_str = str(test_file_user)
 
         # Reading the test file as root [0:0]
         f.assert_log(lambda e: (
@@ -551,9 +562,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             e["uid"] == 0 and
             e["gid"] == 0 and
             "R" in e["types"] and
-            e["path"] == test_file_str
+            e["path"] == str(test_file)
         ),
-                     rf"^head.*\[0:0\].*RC?O?\s+{re.escape(test_file_str)}$")
+                     rf"^head.*\[0:0\].*RC?O?\s+{re_esc(test_file)}$")
 
         # Reading the test file as user nobody [uid:gid]
         f.assert_log(lambda e: (
@@ -561,9 +572,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             e["uid"] == nobody_uid and
             e["gid"] == nobody_gid and
             "R" in e["types"] and
-            e["path"] == test_file_str
+            e["path"] == str(test_file)
         ),
-                     rf"^tail.*\[{nobody_uid}:{nobody_gid}\].*RC?O?\s+{re.escape(test_file_str)}$")
+                     rf"^tail.*\[{nobody_uid}:{nobody_gid}\].*RC?O?\s+{re_esc(test_file)}$")
 
         # File creation as root [0:0]
         f.assert_log(lambda e: (
@@ -571,9 +582,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             e["uid"] == 0 and
             e["gid"] == 0 and
             "O" in e["types"] and
-            e["path"] == test_file_root_str
+            e["path"] == str(test_file_root)
         ),
-                     rf"^touch.*\[0:0\].*C?W?O\s+{re.escape(test_file_root_str)}$")
+                     rf"^touch.*\[0:0\].*C?W?O\s+{re_esc(test_file_root)}$")
 
         # File creation as user nobody [uid:gid]
         f.assert_log(lambda e: (
@@ -581,9 +592,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             e["uid"] == nobody_uid and
             e["gid"] == nobody_gid and
             "O" in e["types"] and
-            e["path"] == test_file_user_str
+            e["path"] == str(test_file_user)
         ),
-                     rf"^touch.*\[{nobody_uid}:{nobody_gid}\].*C?W?O\s+{re.escape(test_file_user_str)}$")
+                     rf"^touch.*\[{nobody_uid}:{nobody_gid}\].*C?W?O\s+{re_esc(test_file_user)}$")
 
     def test_json(self):
         """JSON-specific features like path_raw, UTF-8 handling, device/inode, etc."""
@@ -591,19 +602,19 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
         # Test 1: Basic path tracking
         good_file = self.tmp_path / "1-good.tmp"
-        slow_exe(["touch", str(good_file)])
+        slow_exe("touch", good_file)
 
         # Test 2: path_raw for non-UTF8 paths
         bad_file = self.tmp_path / f"2-bad-{chr(1)}.tmp"
-        slow_exe(["touch", str(bad_file)])
+        slow_exe("touch", bad_file)
 
         # Test 3: pid tracking
         pid_file = self.tmp_path / "3-pid"
-        slow_exe(["bash", "-c", f"echo $$ > '{pid_file}'"])
+        slow_exe("bash", "-c", f"echo $$ > '{pid_file}'")
 
         # Test 4: device and inode tracking
         device_file = self.tmp_path / "4-good.tmp"
-        slow_exe(["touch", str(device_file)])
+        slow_exe("touch", device_file)
 
         # Test 5: UTF-8 test cases - keep as raw bytes for bad cases
         # (expected_result, filename_bytes, description)
@@ -648,7 +659,7 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
             # Use printf to create the exact filename with byte sequences
             printf_arg = ''.join(f'\\{b:03o}' for b in full_filename_bytes)
-            slow_exe(["bash", "-c", f"touch \"$(printf '{printf_arg}')\""])
+            slow_exe("bash", "-c", f"touch \"$(printf '{printf_arg}')\"")
 
             created_utf8_files.append((expected, full_filename_bytes, description))
 
@@ -711,62 +722,62 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
                              rf"^touch\([0-9]*\).* {file_path_escaped}$")
 
     def test_dir(self):
-        yes1 = str(self.tmp_path / "yes-1")
-        yes2 = str(self.tmp_path / "yes-2")
-        no1 = str(self.tmp_path / "no-1")
+        yes1 = self.tmp_path / "yes-1"
+        yes2 = self.tmp_path / "yes-2"
+        no1 = self.tmp_path / "no-1"
 
-        exe(["mkdir", yes1])
-        exe(["mkdir", yes2])
-        exe(["mkdir", no1])
+        exe("mkdir", yes1)
+        exe("mkdir", yes2)
+        exe("mkdir", no1)
 
         fs = [
             FatraceRunner("-s", "3", "-d", yes1, f"--dir={yes2}", "--json"),
             FatraceRunner("-s", "3", "--json", "--", yes1, yes2),
         ]
 
-        slow_exe(["mkdir", f"{yes1}/subA"])
-        slow_exe(["mkdir", f"{no1}/subB"])
+        slow_exe("mkdir", yes1 / "subA")
+        slow_exe("mkdir", no1 / "subB")
 
-        slow_exe(["touch", f"{yes1}/yesC"])
-        slow_exe(["touch", f"{yes1}/subA/noD"])
-        slow_exe(["touch", f"{yes2}/yesE"])
-        slow_exe(["touch", f"{no1}/noF"])
-        slow_exe(["touch", f"{no1}/subB/noG"])
+        slow_exe("touch", yes1 / "yesC")
+        slow_exe("touch", yes1 / "subA/noD")
+        slow_exe("touch", yes2 / "yesE")
+        slow_exe("touch", no1 / "noF")
+        slow_exe("touch", no1 / "subB/noG")
 
-        slow_exe(["mv", yes1, yes2])
-        new_yes1 = str(self.tmp_path / "yes-2" / "yes-1")
-        slow_exe(["mv", no1, yes2])
-        new_no1 = str(self.tmp_path / "yes-2" / "no-1")
+        slow_exe("mv", yes1, yes2)
+        new_yes1 = yes2 / "yes-1"
+        slow_exe("mv", no1, yes2)
+        new_no1 = yes2 / "no-1"
 
-        slow_exe(["touch", f"{new_yes1}/yesH"])
-        slow_exe(["touch", f"{new_yes1}/subA/noI"])
-        slow_exe(["touch", f"{new_no1}/noJ"])
-        slow_exe(["touch", f"{new_no1}/subB/noK"])
+        slow_exe("touch", new_yes1 / "yesH")
+        slow_exe("touch", new_yes1 / "subA/noI")
+        slow_exe("touch", new_no1 / "noJ")
+        slow_exe("touch", new_no1 / "subB/noK")
 
         for f in fs:
             f.finish()
-            f.assert_log    (lambda e: e["comm"] == "mkdir" and e["types"] == "+" and e["path"] == yes1,
-                             rf"^mkdir\([0-9]*\): \+ +{re.escape(yes1)}")
-            f.assert_not_log(lambda e: e["comm"] == "mkdir" and e["types"] == "+" and e["path"] == no1,
-                             rf"^mkdir\([0-9]*\): \+ +{re.escape(no1)}")
-            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{yes1}/yesC",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(yes1)}/yesC")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{yes1}/subA/noD",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(yes1)}/subA/noD")
-            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{yes2}/yesE",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(yes2)}/yesE")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{no1}/noF",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(no1)}/noF")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{no1}/subB/noG",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(no1)}/subB/noG")
-            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{new_yes1}/yesH",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(new_yes1)}/yesH")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{new_yes1}/subA/noI",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(new_yes1)}/subA/noI")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{new_no1}/noJ",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(new_no1)}/noJ")
-            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == f"{new_no1}/subB/noK",
-                             rf"^touch\([0-9]*\): C?WO? +{re.escape(new_no1)}/subB/noK")
+            f.assert_log    (lambda e: e["comm"] == "mkdir" and e["types"] == "+" and e["path"] == str(yes1),
+                             rf"^mkdir\([0-9]*\): \+ +{re_esc(yes1)}")
+            f.assert_not_log(lambda e: e["comm"] == "mkdir" and e["types"] == "+" and e["path"] == str(no1),
+                             rf"^mkdir\([0-9]*\): \+ +{re_esc(no1)}")
+            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(yes1 / "yesC"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(yes1)}/yesC")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(yes1 / "subA/noD"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(yes1)}/subA/noD")
+            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(yes2 / "yesE"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(yes2)}/yesE")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(no1 / "noF"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(no1)}/noF")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(no1 / "subB/noG"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(no1)}/subB/noG")
+            f.assert_log    (lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(new_yes1 / "yesH"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(new_yes1)}/yesH")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(new_yes1 / "subA/noI"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(new_yes1)}/subA/noI")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(new_no1 / "noJ"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(new_no1)}/noJ")
+            f.assert_not_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(new_no1 / "subB/noK"),
+                             rf"^touch\([0-9]*\): C?WO? +{re_esc(new_no1)}/subB/noK")
 
     @unittest.skipIf("container" in os.environ, "Not supported in container environment")
     @unittest.skipIf(os.path.exists("/sysroot/ostree"), "Test does not work on OSTree")
@@ -775,15 +786,15 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         f = FatraceRunner("-s", "2", "--json")
 
         # read a system file
-        slow_exe(["head", "/etc/passwd"], stdout=subprocess.DEVNULL)
+        slow_exe("head", "/etc/passwd")
 
         # create file
         test_file = Path("/tmp/fatrace-test.txt")
-        slow_exe(["touch", str(test_file)])
-        slow_exe(["bash", "-c", f"echo hello > '{test_file}'"])
+        slow_exe("touch", test_file)
+        slow_exe("bash", "-c", f"echo hello > '{test_file}'")
 
         # remove file
-        slow_exe(["rm", str(test_file)])
+        slow_exe("rm", test_file)
 
         f.finish()
 
@@ -791,19 +802,18 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
         # opening the head binary
         f.assert_log(lambda e: "R" in e["types"] and e["path"] == head_binary,
-                     rf"RC?O?\s+{re.escape(head_binary)}$")
+                     rf"RC?O?\s+{re_esc(head_binary)}$")
         # head accessing /etc/passwd
         f.assert_log(lambda e: "R" in e["types"] and e["path"] == "/etc/passwd",
                      r"RC?O?\s+/etc/passwd$")
 
         # create a file
-        test_file_str = str(test_file)
-        f.assert_log(lambda e: e["comm"] == "touch" and "O" in e["types"] and e["path"] == test_file_str,
-                     rf"^touch.*C?W?O\s+{re.escape(test_file_str)}")
-        f.assert_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == test_file_str,
-                     rf"^touch.*C?WO?\s+{re.escape(test_file_str)}")
-        f.assert_log(lambda e: e["comm"] == "bash" and "W" in e["types"] and e["path"] == test_file_str,
-                     rf"^bash.*C?WO?\s+{re.escape(test_file_str)}")
+        f.assert_log(lambda e: e["comm"] == "touch" and "O" in e["types"] and e["path"] == str(test_file),
+                     rf"^touch.*C?W?O\s+{re_esc(test_file)}")
+        f.assert_log(lambda e: e["comm"] == "touch" and "W" in e["types"] and e["path"] == str(test_file),
+                     rf"^touch.*C?WO?\s+{re_esc(test_file)}")
+        f.assert_log(lambda e: e["comm"] == "bash" and "W" in e["types"] and e["path"] == str(test_file),
+                     rf"^bash.*C?WO?\s+{re_esc(test_file)}")
 
         # remove file
         f.assert_log(lambda e: e["comm"] == "touch" and e["types"] == "+" and e["path"] == "/tmp",
