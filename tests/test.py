@@ -99,8 +99,8 @@ class FatraceRunner():
         self.json_process.wait(timeout=10)
         # read log data
         with open(self.text_output_file, 'r',
-                  encoding='utf-8',
-                  errors='backslashreplace') as f:
+                  # We're abusing latin-1 to represent bytes
+                  encoding='latin-1') as f:
             self.text_log_content: str = f.read()
         with open(self.json_output_file, 'r',
                   encoding='utf-8') as f:
@@ -131,8 +131,9 @@ class FatraceRunner():
         # assert that text log matches / does not match
         assert text_matches == present, (
             f"{"No" if present else "At least one"} text entry matched regex\n"
+            f"Regex: {repr(regex)}\n"
             "---- Log content ----\n"
-            f"{self.text_log_content}\n"
+            f"{'\n'.join(map(repr, self.text_log_lines))}\n"
             "-----------------")
         # determine whether json log matches
         json_matches = False
@@ -162,8 +163,8 @@ class FatraceRunner():
                 pass
             assert regex_matches == pred_matches, (
                 f"Text/JSON conditions mismatch.\n"
-                f"Line: {line}\n"
-                f"Regex: {regex}\n"
+                f"Line: {repr(line)}\n"
+                f"Regex: {repr(regex)}\n"
                 f"Regex matches: {regex_matches}\n"
                 f"Line parses to: {obj}\n"
                 f"Predicate matches: {pred_matches}\n"
@@ -198,10 +199,19 @@ def parse_fatrace_text_line(line: str) -> Event:
     if device_match:
         result['device'] = {'major': int(device_match.group(1)), 'minor': int(device_match.group(2))}
         result['inode'] = int(device_match.group(3))
-        return result
+        remaining = remaining[device_match.end():].lstrip()
     parts = re.split(r'(\s+exe=|\s+,\s*parents)', remaining)
     if parts and parts[0].strip() and parts[0].strip() != '(deleted)':
-        result['path'] = parts[0].strip()
+        path = parts[0].strip()
+        path_is_good_utf8 = True
+        try: path.encode('latin-1').decode('utf-8')
+        except UnicodeDecodeError: path_is_good_utf8 = False
+        if set(map(ord, path)).intersection(set([*range(0x20), 0x22, 0x5c, 0x7f])):
+            path_is_good_utf8 = False
+        if path_is_good_utf8:
+            result['path'] = path
+        else:
+            result['path_raw'] = [*map(ord, path)]
     exe_match = re.search(r'\s+exe=([^\s,]+)', remaining)
     if exe_match:
         result['exe'] = exe_match.group(1)
@@ -223,6 +233,7 @@ def parse_fatrace_text_line(line: str) -> Event:
                 parents.append(parent)
         if parents:
             result['parents'] = parents
+    result["parsed_from_text_log"] = True
     return result
 
 class FatraceTests(unittest.TestCase):
@@ -660,9 +671,10 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         f.assert_log(lambda e:
                      e["comm"] == "touch" and
                      e["path"] == str(device_file) and
-                     e["device"] == {"major": os.major(stat_result.st_dev),
-                                     "minor": os.minor(stat_result.st_dev)} and
-                     e["inode"] == stat_result.st_ino,
+                     ("parsed_from_text_log" in e or # Usually the text log has no device or inode
+                      (e["device"] == {"major": os.major(stat_result.st_dev),
+                                       "minor": os.minor(stat_result.st_dev)} and
+                       e["inode"] == stat_result.st_ino)),
                      rf"^touch\([0-9]*\).* {re.escape(str(device_file))}$")
 
         # Test 5: UTF-8 validation - test both good and bad cases properly
@@ -673,22 +685,26 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
             if expected == "good":
                 # Good UTF-8: should be decodable and have "path" field, should NOT have "path_raw"
                 file_path_str = full_path_bytes.decode('utf-8')
+                # We're abusing latin-1 to represent bytes
+                file_path_strbytes = full_path_bytes.decode('latin-1')
                 f.assert_log(lambda e:
                              e["comm"] == "touch" and
                              "comm_raw" not in e and
                              e["path"] == file_path_str and
                              "path_raw" not in e,
-                             rf"^touch\([0-9]*\): .* {re.escape(file_path_str)}$")
+                             rf"^touch\([0-9]*\).* {re.escape(file_path_strbytes)}$")
 
-            elif expected == "bad":
+            else:
+                assert expected == "bad"
                 # Bad UTF-8: should NOT be decodable and should have "path_raw" field as byte array
                 file_bytes_list = list(full_path_bytes)
+                file_path_escaped = ''.join(f'\\{b:03o}' for b in full_path_bytes)
                 f.assert_log(lambda e:
                              e["comm"] == "touch" and
                              "comm_raw" not in e and
                              e["path_raw"] == file_bytes_list and
                              "path" not in e,
-                             rf"^touch\([0-9]*\): .* {re.escape(file_path_str)}$")
+                             rf"^touch\([0-9]*\).* {file_path_escaped}$")
 
     def test_dir(self):
         yes1 = str(self.tmp_path / "yes-1")
