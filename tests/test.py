@@ -11,7 +11,7 @@ import unittest
 import sys
 
 from pathlib import Path
-from typing import Any, Callable, TypeAlias, TypedDict, Union
+from typing import Any, Callable, TypedDict, Union
 
 class Device(TypedDict):
     major: int
@@ -35,7 +35,6 @@ class Event(TypedDict, total=False):
     path_raw: list[int]
     comm_raw: list[int]
     parsed_from_text_log: bool
-Pred: TypeAlias = Callable[[Event], bool]
 
 TESTDIR = Path(__file__).parent.resolve()
 ROOTDIR = TESTDIR.parent.resolve()
@@ -136,7 +135,7 @@ class FatraceRunner():
         # remove temporary directory
         self.log_dir.cleanup()
         self.finished = True
-    def assert_log(self, pred: Pred, regex: Union[str, bytes], present = True) -> None:
+    def assert_log(self, pred: Callable[[Event], bool], regex: Union[str, bytes], present = True) -> None:
         assert self.finished
         regexb = regex.encode('latin-1') if isinstance(regex, str) else regex
         # determine whether text log matches
@@ -145,11 +144,12 @@ class FatraceRunner():
             if re.search(regexb, lineb):
                 text_matches = True
         # assert that text log matches / does not match
+        msg_log_content = '\n'.join(map(repr, self.text_log_linesb))
         assert text_matches == present, (
-            f"{"No" if present else "At least one"} text entry matched regex\n"
+            f"{'No' if present else 'At least one'} text entry matched regex\n"
             f"Regex: {repr(regex)}\n"
             "---- Log content ----\n"
-            f"{'\n'.join(map(repr, self.text_log_linesb))}\n"
+            f"{msg_log_content}\n"
             "-----------------")
         # determine whether json log matches
         json_matches = False
@@ -162,7 +162,7 @@ class FatraceRunner():
                 pass
         # assert that json log matches / does not match
         assert json_matches == present, (
-            f"{"No" if present else "At least one"} JSON entry matched lambda\n"
+            f"{'No' if present else 'At least one'} JSON entry matched lambda\n"
             "---- Log content ----\n"
             f"{self.json_log_content}\n"
             "-----------------")
@@ -185,7 +185,7 @@ class FatraceRunner():
                 f"Line parses to: {obj}\n"
                 f"Predicate matches: {pred_matches}\n"
             )
-    def assert_not_log(self, pred: Pred, regex: str) -> None:
+    def assert_not_log(self, pred: Callable[[Event], bool], regex: str) -> None:
         self.assert_log(pred, regex, False)
 
 def parse_fatrace_text_line(line: bytes) -> Event:
