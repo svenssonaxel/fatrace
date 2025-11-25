@@ -34,6 +34,7 @@ class Event(TypedDict, total=False):
     parents: list[Parent]
     path_raw: list[int]
     comm_raw: list[int]
+    parsed_from_text_log: bool
 Pred: TypeAlias = Callable[[Event], bool]
 
 TESTDIR = Path(__file__).parent.resolve()
