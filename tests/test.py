@@ -11,7 +11,7 @@ import unittest
 import sys
 
 from pathlib import Path
-from typing import Callable, TypeAlias, TypedDict
+from typing import Callable, TypeAlias, TypedDict, Union
 
 class Device(TypedDict):
     major: int
@@ -98,22 +98,22 @@ class FatraceRunner():
         self.text_process.wait(timeout=10)
         self.json_process.wait(timeout=10)
         # read log data
-        with open(self.text_output_file, 'r',
-                  # We're abusing latin-1 to represent bytes
-                  encoding='latin-1') as f:
-            self.text_log_content: str = f.read()
+        with open(self.text_output_file,
+                  'rb', # Binary, so we can handle invalid utf-8 etc.
+                  ) as f:
+            text_log_contentb: bytes = f.read()
         with open(self.json_output_file, 'r',
                   encoding='utf-8') as f:
             self.json_log_content: str = f.read()
         # process log data
-        self.text_log_lines: list[str] = [
-            line
-            for line in self.text_log_content.strip().split('\n')
-            if line]
-        self.text_log_parsed: list[tuple[str, Event]] = [
-            (line, parse_fatrace_text_line(line))
-            for line in self.text_log_lines
-            if line]
+        self.text_log_linesb: list[bytes] = [
+            lineb
+            for lineb in text_log_contentb.strip().split(b'\n')
+            if lineb]
+        self.text_log_parsedb: list[tuple[bytes, Event]] = [
+            (lineb, parse_fatrace_text_line(lineb))
+            for lineb in self.text_log_linesb
+            if lineb]
         self.json_log_objs = [
             json.loads(line)
             for line in self.json_log_content.strip().split('\n')
@@ -121,19 +121,20 @@ class FatraceRunner():
         # remove temporary directory
         self.log_dir.cleanup()
         self.finished = True
-    def assert_log(self, pred: Pred, regex: str, present = True) -> None:
+    def assert_log(self, pred: Pred, regex: Union[str, bytes], present = True) -> None:
         assert self.finished
+        regexb = regex.encode('latin-1') if isinstance(regex, str) else regex
         # determine whether text log matches
         text_matches = False
-        for line in self.text_log_lines:
-            if re.search(regex, line):
+        for lineb in self.text_log_linesb:
+            if re.search(regexb, lineb):
                 text_matches = True
         # assert that text log matches / does not match
         assert text_matches == present, (
             f"{"No" if present else "At least one"} text entry matched regex\n"
             f"Regex: {repr(regex)}\n"
             "---- Log content ----\n"
-            f"{'\n'.join(map(repr, self.text_log_lines))}\n"
+            f"{'\n'.join(map(repr, self.text_log_linesb))}\n"
             "-----------------")
         # determine whether json log matches
         json_matches = False
@@ -152,8 +153,8 @@ class FatraceRunner():
             "-----------------")
         # For each text mode output line, assert that the regex matches it iff
         # the predicate matches it after parsing
-        for (line, obj) in self.text_log_parsed:
-            regex_matches = bool(re.search(regex, line))
+        for (lineb, obj) in self.text_log_parsedb:
+            regex_matches = bool(re.search(regexb, lineb))
             pred_matches = False
             try:
                 if pred(obj):
@@ -163,8 +164,8 @@ class FatraceRunner():
                 pass
             assert regex_matches == pred_matches, (
                 f"Text/JSON conditions mismatch.\n"
-                f"Line: {repr(line)}\n"
-                f"Regex: {repr(regex)}\n"
+                f"Line: {repr(lineb)}\n"
+                f"Regex: {repr(regexb)}\n"
                 f"Regex matches: {regex_matches}\n"
                 f"Line parses to: {obj}\n"
                 f"Predicate matches: {pred_matches}\n"
@@ -172,18 +173,18 @@ class FatraceRunner():
     def assert_not_log(self, pred: Pred, regex: str) -> None:
         self.assert_log(pred, regex, False)
 
-def parse_fatrace_text_line(line: str) -> Event:
+def parse_fatrace_text_line(line: bytes) -> Event:
     """Given a line from fatrace text mode output, return the deserialized expected output for that event in JSON mode."""
     result: Event = {}
     remaining = line.strip()
-    timestamp_match = re.match(r'^(\d{2}:\d{2}:\d{2}\.\d{6}|\d+\.\d{6})\s+', remaining)
+    timestamp_match = re.match(rb'^(\d{2}:\d{2}:\d{2}\.\d{6}|\d+\.\d{6})\s+', remaining)
     if timestamp_match:
-        result['timestamp'] = timestamp_match.group(1)
+        result['timestamp'] = timestamp_match.group(1).decode()
         remaining = remaining[timestamp_match.end():]
-    proc_match = re.match(r'([^(]+)\((\d+)\)(?:\s+\[(\d+):(\d+)\])?\s*:\s+', remaining)
+    proc_match = re.match(rb'([^(]+)\((\d+)\)(?:\s+\[(\d+):(\d+)\])?\s*:\s+', remaining)
     if not proc_match:
-        raise ValueError(f"Could not parse process info from: {line}")
-    procname = proc_match.group(1)
+        raise ValueError(f"Could not parse process info from: {repr(line)}")
+    procname = proc_match.group(1).decode()
     if procname != 'unknown':
         result['comm'] = procname
     result['pid'] = int(proc_match.group(2))
@@ -191,44 +192,46 @@ def parse_fatrace_text_line(line: str) -> Event:
         result['uid'] = int(proc_match.group(3))
         result['gid'] = int(proc_match.group(4))
     remaining = remaining[proc_match.end():]
-    types_match = re.match(r'([RCWO+D<>]+)\s+', remaining)
+    types_match = re.match(rb'([RCWO+D<>]+)\s+', remaining)
     if types_match:
-        result['types'] = types_match.group(1)
+        result['types'] = types_match.group(1).decode()
         remaining = remaining[types_match.end():]
-    device_match = re.match(r'device (\d+):(\d+) inode (\d+)', remaining)
+    device_match = re.match(rb'device (\d+):(\d+) inode (\d+)', remaining)
     if device_match:
         result['device'] = {'major': int(device_match.group(1)), 'minor': int(device_match.group(2))}
         result['inode'] = int(device_match.group(3))
         remaining = remaining[device_match.end():].lstrip()
-    parts = re.split(r'(\s+exe=|\s+,\s*parents)', remaining)
+    parts = re.split(rb'(\s+exe=|\s+,\s*parents)', remaining)
     if parts and parts[0].strip() and parts[0].strip() != '(deleted)':
         path = parts[0].strip()
-        path_is_good_utf8 = True
-        try: path.encode('latin-1').decode('utf-8')
-        except UnicodeDecodeError: path_is_good_utf8 = False
-        if set(map(ord, path)).intersection(set([*range(0x20), 0x22, 0x5c, 0x7f])):
-            path_is_good_utf8 = False
-        if path_is_good_utf8:
-            result['path'] = path
+        path_is_nonfunny_utf8 = True
+        try:
+            path.decode()
+        except UnicodeDecodeError:
+            path_is_nonfunny_utf8 = False
+        if set(path).intersection(set([*range(0x20), 0x22, 0x5c, 0x7f])):
+            path_is_nonfunny_utf8 = False
+        if path_is_nonfunny_utf8:
+            result['path'] = path.decode()
         else:
-            result['path_raw'] = [*map(ord, path)]
-    exe_match = re.search(r'\s+exe=([^\s,]+)', remaining)
+            result['path_raw'] = [*path]
+    exe_match = re.search(rb'\s+exe=([^\s,]+)', remaining)
     if exe_match:
-        result['exe'] = exe_match.group(1)
-    parents_match = re.search(r',\s*parents=(.+)$', remaining)
+        result['exe'] = exe_match.group(1).decode()
+    parents_match = re.search(rb',\s*parents=(.+)$', remaining)
     if parents_match:
         parents: list[Parent] = []
-        for parent_match in re.findall(r'\(([^)]+)\)', parents_match.group(1)):
+        for parent_match in re.findall(rb'\(([^)]+)\)', parents_match.group(1)):
             parent: Parent = {}
-            pid_match = re.search(r'pid=(\d+)', parent_match)
+            pid_match = re.search(rb'pid=(\d+)', parent_match)
             if pid_match:
                 parent['pid'] = int(pid_match.group(1))
-            comm_match = re.search(r'comm=([^\s]+)', parent_match)
+            comm_match = re.search(rb'comm=([^\s]+)', parent_match)
             if comm_match:
-                parent['comm'] = comm_match.group(1)
-            exe_match = re.search(r'exe=([^\s]+)', parent_match)
+                parent['comm'] = comm_match.group(1).decode()
+            exe_match = re.search(rb'exe=([^\s]+)', parent_match)
             if exe_match:
-                parent['exe'] = exe_match.group(1)
+                parent['exe'] = exe_match.group(1).decode()
             if parent:
                 parents.append(parent)
         if parents:
