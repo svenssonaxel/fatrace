@@ -11,15 +11,17 @@ import unittest
 import sys
 
 from pathlib import Path
-from typing import Any, Callable, TypedDict, Union
+from typing import Callable, TypedDict, Union
 
 class Device(TypedDict):
     major: int
     minor: int
+
 class Parent(TypedDict, total=False):
     pid: int
     comm: str
     exe: str
+
 class Event(TypedDict, total=False):
     timestamp: str
     comm: str
@@ -43,20 +45,16 @@ ROOTDIR = TESTDIR.parent.resolve()
 root_is_btrfs = subprocess.check_output(["findmnt", "--noheadings", "--output=FSTYPE", "/"]).strip() == b"btrfs"
 
 _exe_stream = None
-def _exe(argv_any: tuple[Any, ...], **kwargs) -> None:
-    argv: list[str] = [str(x) for x in argv_any]
+def _exe(argv_strorpath: tuple[Union[str, Path], ...], **kwargs) -> None:
+    argv: list[str] = [str(x) for x in argv_strorpath]
     print(f"Running command: {' '.join(argv)}", file=_exe_stream)
-    proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, **kwargs)
-    if proc.stdout:
-        print(f"stdout: {proc.stdout.decode()}", file=_exe_stream)
-    if proc.stderr:
-        print(f"Stderr: {proc.stderr.decode()}", file=_exe_stream)
+    proc = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, **kwargs)
     assert proc.returncode == 0, f"Command {' '.join(argv)} failed with exit code {proc.returncode}."
 
-def exe(*argv: Any) -> None:
+def exe(*argv: Union[str, Path]) -> None:
     _exe(argv)
 
-def slow_exe(*argv: Any) -> None:
+def slow_exe(*argv: Union[str, Path]) -> None:
     """Run a command with tests/slow-exit.so
 
     Use this for test commands under fatrace, not for setup.
@@ -86,10 +84,10 @@ def retry_unmount(path: str) -> None:
         raise RuntimeError(f"Failed to unmount {path}")
 
 class FatraceRunner():
-    """Run text and json fatrace runners in parallel. args must include `--json`."""
-    def __init__(self, *args_any: Any) -> None:
-        args: list[str] = [str(x) for x in args_any]
-        assert "--json" in args
+    """Run text and json fatrace runners in parallel. args must not include `--json`."""
+    def __init__(self, *args_strorpath: Union[str, Path]) -> None:
+        args: list[str] = [str(x) for x in args_strorpath]
+        assert "--json" not in args
         # create our own private log dir
         self.log_dir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory()
         self.text_output_file: str = os.path.join(self.log_dir.name, "fatrace.log.txt")
@@ -98,10 +96,9 @@ class FatraceRunner():
         fatrace_bin = "fatrace" if os.getenv("FATRACE_INSTALLED_TEST") else str(ROOTDIR / "fatrace")
         # start processes
         self.text_process: subprocess.Popen[bytes] = subprocess.Popen(
-            [fatrace_bin, "-o", str(self.text_output_file)] +
-             [x for x in args if x!="--json"])
+            [fatrace_bin, "-o", str(self.text_output_file), *args])
         self.json_process: subprocess.Popen[bytes] = subprocess.Popen(
-            [fatrace_bin, "-o", str(self.json_output_file), *args])
+            [fatrace_bin, "--json", "-o", str(self.json_output_file), *args])
         # wait until both fatrace starts
         while not (os.path.exists(self.text_output_file) and
                    os.path.exists(self.json_output_file)):
@@ -272,7 +269,7 @@ class FatraceTests(unittest.TestCase):
         os.chdir(self.tmp_path)
 
     def test_currentmount(self):
-        f = FatraceRunner("--current-mount", "-s", "2", "--json")
+        f = FatraceRunner("--current-mount", "-s", "2")
 
         # Create/write/remove a file
         test_file = self.tmp_path / "test.txt"
@@ -346,7 +343,7 @@ class FatraceTests(unittest.TestCase):
                      rf"^rm\(.*:\s+D\s+{cwd_re}$")
 
     def test_command(self):
-        f = FatraceRunner("--current-mount", "--command", "touch", "-s", "2", "--json")
+        f = FatraceRunner("--current-mount", "--command", "touch", "-s", "2")
 
         # Create files with different programs
         slow_exe("touch", self.tmp_path / "includeme")
@@ -372,7 +369,7 @@ class FatraceTests(unittest.TestCase):
         simple_touch = TESTDIR / "simple-touch"
         exe("cp", str(simple_touch), long_cmd)
 
-        f = FatraceRunner("--current-mount", "--command", "VeryLongTouchCommand", "-s", "2", "--json")
+        f = FatraceRunner("--current-mount", "--command", "VeryLongTouchCommand", "-s", "2")
         slow_exe(long_cmd, self.tmp_path / "hello.txt")
 
         f.finish()
@@ -404,7 +401,7 @@ class FatraceTests(unittest.TestCase):
         # create initial file
         slow_exe("bash", "-c", "echo hello > world.txt")
 
-        f = FatraceRunner("--current-mount", "-s", "2", "--json")
+        f = FatraceRunner("--current-mount", "-s", "2")
 
         # Read existing file
         slow_exe("head", mount_dir / "world.txt")
@@ -472,7 +469,7 @@ class FatraceTests(unittest.TestCase):
                      rf"^touch.*\sC?W?O\s+{re.escape(str(subvol_file))}")
 
     def test_exe_parents(self):
-        f = FatraceRunner("--current-mount", "-s", "2", "--parents", "--exe", "--json")
+        f = FatraceRunner("--current-mount", "-s", "2", "--parents", "--exe")
 
         # Create complex parent chain: touch → bash → python3 → test
         test_file = self.tmp_path / "file.tmp"
@@ -528,9 +525,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         test_file.write_text("test content")
 
         # Test user tracking functionality
-        f = FatraceRunner("--current-mount", "--user", "-s", "4", "--json")
+        f = FatraceRunner("--current-mount", "--user", "-s", "4")
 
-        def slow_exe_nobody(*argv: list[str]) -> None:
+        def slow_exe_nobody(*argv: Union[str, Path]) -> None:
             exe("runuser", "-u", "nobody",
                  "env", "LD_PRELOAD=" + str(TESTDIR / "slow-exit.so"), *argv)
 
@@ -598,7 +595,7 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
 
     def test_json(self):
         """JSON-specific features like path_raw, UTF-8 handling, device/inode, etc."""
-        f = FatraceRunner("--current-mount", "--user", "-s", "10", "--json")
+        f = FatraceRunner("--current-mount", "--user", "-s", "10")
 
         # Test 1: Basic path tracking
         good_file = self.tmp_path / "1-good.tmp"
@@ -731,9 +728,9 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
         exe("mkdir", no1)
 
         fs = [
-            FatraceRunner("-s", "3", "-d", yes1, f"--dir={yes2}", "--json"),
-            FatraceRunner("-s", "3", "--json", "-d", yes1, "--", yes2),
-            FatraceRunner("-s", "3", "--json", "--", yes1, yes2),
+            FatraceRunner("-s", "3", "-d", yes1, f"--dir={yes2}"),
+            FatraceRunner("-s", "3", "-d", yes1, "--", yes2),
+            FatraceRunner("-s", "3", "--", yes1, yes2),
         ]
 
         slow_exe("mkdir", yes1 / "subA")
@@ -784,7 +781,7 @@ with open("{python_pid_file}", "w") as f: f.write(f"{{os.getpid()}}\\n")
     @unittest.skipIf(os.path.exists("/sysroot/ostree"), "Test does not work on OSTree")
     @unittest.skipIf(root_is_btrfs, "FANOTIFY does not work on btrfs, https://github.com/martinpitt/fatrace/issues/3")
     def test_all_mounts(self):
-        f = FatraceRunner("-s", "2", "--json")
+        f = FatraceRunner("-s", "2")
 
         # read a system file
         slow_exe("head", "/etc/passwd")
