@@ -15,14 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import functools
+import json
+import os
+import re
 import subprocess
 import sys
-import os
-import time
-import re
-import functools
 import tempfile
-import json
+import time
 
 # standard time for measuring in seconds
 DURATION = 60
@@ -51,7 +51,7 @@ def probe():
     env = os.environ.copy()
     env['LC_MESSAGES'] = 'C'
 
-    sys.stderr.write('Starting measurement for %i seconds...\n' % DURATION)
+    sys.stderr.write(f'Starting measurement for {DURATION} seconds...\n')
     (fd, powertop_csv) = tempfile.mkstemp(suffix='.csv', prefix='powertop')
     os.close(fd)
     powertop = subprocess.Popen(['powertop', '--csv=' + powertop_csv,
@@ -110,11 +110,12 @@ def group_fatrace_events(events):
             # ignore read-close events for now
             continue
 
-        comm = event['comm'] if 'comm' in event else 'unknown'
+        comm = event.get('comm', 'unknown')
         if 'path' in event:
             path = event['path']
         elif 'device' in event:
-            path = 'device %i:%i inode %i' % (*event['device'], event['inode'])
+            major, minor = event['device']
+            path = f'device {major}:{minor} inode {event["inode"]}'
         else:
             path = 'unknown'
         stat = groups.setdefault(comm, {}).setdefault(path, [0, 0])
@@ -141,15 +142,15 @@ def fatrace_report(raw_out):
     events_per_prog.sort(key=lambda i: i[1], reverse=True)
 
     for (prog, count) in events_per_prog:
-        print('======= %s: %i file access events ======' % (prog, count))
+        print(f'======= {prog}: {count} file access events ======')
         for file, (r, w) in events[prog].items():
             s = file + ':'
             if r > 0:
-                s += ' %i reads' % r
+                s += f' {r} reads'
             if w > 0:
-                s += ' %i writes' % w
+                s += f' {w} writes'
             print(s)
-        print('')
+        print()
 
 
 def powertop_report(raw_out):
@@ -175,11 +176,11 @@ def powertop_report(raw_out):
         while not lines[i]:
             i += 1
 
-        print('====== %s ======' % print_header)
+        print(f'====== {print_header} ======')
         while i < len(lines) and lines[i] and not lines[i].startswith('_____'):
             print(lines[i])
             i += 1
-        print('')
+        print()
 
 
 def main():

@@ -1,17 +1,15 @@
-#!/usr/bin/env python3
 import json
 import os
 import pwd
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
-import sys
-
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 TESTDIR = Path(__file__).parent.resolve()
 ROOTDIR = TESTDIR.parent.resolve()
@@ -262,7 +260,7 @@ class FatraceTests(unittest.TestCase):
         f.finish()
 
         # Should find the truncated command name (first 15 chars per TASK_COMM_LEN-1)
-        f.assert_log(rf"^VeryLongTouchCo\(.*C?WO?\s+{str(self.tmp_path)}/hello\.txt$")
+        f.assert_log(rf"^VeryLongTouchCo\(.*C?WO?\s+{self.tmp_path!s}/hello\.txt$")
 
     def test_btrfs(self):
         if not shutil.which("mkfs.btrfs"):
