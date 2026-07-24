@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install build and test dependencies
         run: |
@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run container test
         run: sudo tests/run-container "${{ matrix.container }}"
