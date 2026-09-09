@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -157,7 +158,7 @@ static struct fatrace_event ev;
 static void
 event_init (pid_t pid, const char *comm, uint64_t mask, const char *path)
 {
-    memset (&ev, 0, sizeof ev);
+    memset (&ev, 0, offsetof (struct fatrace_event, parents)); // Mirroring ../fatrace.c
     ev.proc.pid = pid;
     strcpy (ev.proc.comm, comm);
     ev.mask = mask;
